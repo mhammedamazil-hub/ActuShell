@@ -1,0 +1,44 @@
+# Inspect-only agent: it can look, it cannot change anything.
+#
+#   agentlite start --config examples/read_only.yaml
+#
+# Use this when pointing AgentLite at a directory you care about, or when handing
+# a task to a model you do not fully trust yet.
+
+workspace: ./workspace
+
+permissions:
+  terminal:
+    enabled: true
+    require_confirmation: true
+    # Everything except a small, safe read-only set is refused.
+    allowed_commands:
+      - "^ls\\b"
+      - "^cat\\b"
+      - "^head\\b"
+      - "^tail\\b"
+      - "^wc\\b"
+      - "^find\\b"
+      - "^grep\\b"
+      - "^git (status|log|diff|show)\\b"
+      - "^python3? --version$"
+    timeout: 10
+
+  filesystem:
+    enabled: true
+    read_only: true
+    allowed_paths:
+      - ./workspace
+    denied_paths:
+      - "*.pem"
+      - "*.key"
+      - "**/.env*"
+      - "**/.git/config"
+
+  browser:
+    enabled: false
+
+security:
+  confirmation_mode: deny # refuse rather than ask: nobody is watching
+  max_steps: 10
+  max_run_seconds: 120

@@ -1,0 +1,115 @@
+# AgentLite example configuration.
+#
+# Copy to ./agentlite.yaml (or ~/.agentlite/config.yaml) and edit.
+# Everything here is optional - every key has a default.
+# Secrets are never stored in this file: name the environment variable instead.
+
+# Root directory for the agent. Relative paths in tools and permissions resolve
+# against the directory containing this file.
+workspace: ./workspace
+
+server:
+  host: 127.0.0.1 # bind elsewhere only with AGENTLITE_API_TOKEN set
+  port: 8765
+  # api_token: set via the AGENTLITE_API_TOKEN environment variable
+  allow_insecure_remote: false
+  cors_origins: []
+  log_level: info
+
+provider:
+  # openai | openrouter | gemini | ollama | groq | together | lmstudio | vllm
+  # | openai-compatible (with an explicit base_url) | mock (scripted, for tests)
+  name: openai
+  model: gpt-4o-mini
+  # base_url: http://localhost:11434/v1
+  api_key_env: OPENAI_API_KEY
+  timeout: 90
+  max_retries: 2
+  temperature: 0.0
+  # extra_headers:
+  #   HTTP-Referer: https://example.com      # OpenRouter likes these
+  # extra_body:
+  #   top_p: 0.9
+
+permissions:
+  terminal:
+    enabled: true
+    # Ask before running anything that matches confirm_patterns.
+    require_confirmation: true
+    timeout: 30
+    max_timeout: 600
+    cwd: ./workspace
+    allow_shell: false # keep this false unless you need pipes
+    allow_outside_cwd: false
+    # Empty = deny-list mode (recommended). Non-empty = allow-list mode:
+    # only commands matching these regexes may run at all.
+    allowed_commands: []
+    #   - '^ls\b'
+    #   - '^git status'
+    denied_commands:
+      - "\\bsudo\\b"
+      - "\\brm\\s+-rf\\s+/(\\s|$)"
+      - "\\bmkfs(\\.[a-z0-9]+)?\\b"
+      - "\\bdd\\b.*\\bof=/dev/"
+      - "\\bcurl\\b[^|]*\\|\\s*(sudo\\s+)?(ba|z|fi)?sh"
+      - "\\bshutdown\\b"
+      - "\\breboot\\b"
+    confirm_patterns:
+      - "\\brm\\b"
+      - "\\bmv\\b"
+      - "\\bpip\\s+install\\b"
+      - "\\bgit\\s+push\\b"
+      - "\\bcurl\\b"
+    env_denylist:
+      - ".*KEY.*"
+      - ".*TOKEN.*"
+      - ".*SECRET.*"
+      - ".*PASSWORD.*"
+    env_allowlist: []
+    max_output_bytes: 32768
+
+  filesystem:
+    enabled: true
+    require_confirmation: false
+    # Empty = the workspace only. Add more roots to share specific directories.
+    allowed_paths:
+      - ./workspace
+    denied_paths: []
+    read_only: false
+    allow_hidden: false
+    follow_symlinks: false
+    max_read_bytes: 262144
+    max_write_bytes: 1048576
+    max_list_entries: 500
+
+  browser:
+    enabled: true
+    require_confirmation: false
+    headless: true
+    timeout_ms: 20000
+    navigation_timeout_ms: 30000
+    allowed_domains: [] # empty = any http(s) site
+    denied_domains: []
+    screenshot_dir: ./workspace/screenshots
+    max_page_chars: 20000
+    viewport_width: 1280
+    viewport_height: 800
+    # user_agent: "AgentLite/0.1"
+
+security:
+  # prompt = ask a human (stdin in the CLI, HTTP 202 + resume in the API)
+  # allow  = approve everything without asking
+  # deny   = refuse anything that would need confirmation
+  confirmation_mode: prompt
+  max_steps: 25
+  max_run_seconds: 600
+  audit_log: true
+  redact_secrets: true
+  log_tool_output: true
+  max_output_preview: 500
+  max_tool_result_chars: 8000
+
+logging:
+  dir: ~/.agentlite/logs
+  level: INFO
+  file: agentlite.jsonl
