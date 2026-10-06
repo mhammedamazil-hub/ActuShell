@@ -1,0 +1,90 @@
+[build-system]
+# setuptools>=77 is needed for PEP 639 license metadata (the SPDX string).
+requires = ["setuptools>=77.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentlite"
+version = "0.2.0"
+description = "A lightweight, self-hosted runtime that gives AI models controlled access to real computers."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "AgentLite contributors" }]
+keywords = ["agent", "llm", "tools", "computer-use", "automation", "runtime"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.40.0"]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1.0",
+    "build>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/mhammedamazil-hub/AgentLite"
+Changelog = "https://github.com/mhammedamazil-hub/AgentLite/blob/main/CHANGELOG.md"
+Security = "https://github.com/mhammedamazil-hub/AgentLite/blob/main/docs/SECURITY.md"
+Repository = "https://github.com/mhammedamazil-hub/AgentLite"
+Issues = "https://github.com/mhammedamazil-hub/AgentLite/issues"
+
+[project.scripts]
+agentlite = "agentlite.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["agentlite*"]
+
+[tool.setuptools.package-data]
+agentlite = ["config/*.yaml", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+# B008  : FastAPI dependency defaults are idiomatic
+# UP006/UP007/UP045: typing.Optional/List/Dict are kept for Python 3.9 support
+# S101/S603/S607: this project intentionally runs commands and asserts in tests
+ignore = [
+    "B008",
+    "UP006",
+    "UP007",
+    "UP035",
+    "UP045",
+    "S101",
+    "S603",
+    "S607",
+    "S404",
+    "S310",
+    "S110",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S603", "S607", "S104", "S108", "E501"]
+"examples/*" = ["S104", "S101"]

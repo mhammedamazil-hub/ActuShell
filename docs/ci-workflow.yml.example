@@ -1,0 +1,104 @@
+# Copy this file to .github/workflows/ci.yml to enable CI on your fork.
+#
+#   mkdir -p .github/workflows && cp docs/ci-workflow.yml.example .github/workflows/ci.yml
+#
+# It is shipped as an example (not installed) so that forks stay in control of
+# what runs on their repository.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the previous run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip ruff
+      - name: Ruff (lint)
+        run: ruff check agentlite tests examples
+      - name: Ruff (format check)
+        run: ruff format --check agentlite tests
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum supported version is 3.9; keep testing it.
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest
+
+      - name: Security boundaries
+        # These are the tests that must fail if a control is weakened; they get
+        # their own step so a regression is visible at a glance.
+        run: pytest tests/test_security.py -v
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install the wheel in a clean virtualenv
+        # A clean environment is the only way to notice a missing dependency or
+        # a data file that was never packaged.
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --upgrade pip
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/python -c "import agentlite, agentlite.api.server; print(agentlite.__version__)"
+          /tmp/clean/bin/agentlite version
+          /tmp/clean/bin/agentlite tools
+          /tmp/clean/bin/agentlite config --check || true
+          /tmp/clean/bin/agentlite doctor || true
+
+      - name: Check the packaged default config
+        run: |
+          /tmp/clean/bin/python - <<'PY'
+          from pathlib import Path
+          import agentlite
+          default = Path(agentlite.__file__).parent / "config" / "default.yaml"
+          assert default.exists(), "default.yaml was not packaged"
+          print("default.yaml packaged:", default)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

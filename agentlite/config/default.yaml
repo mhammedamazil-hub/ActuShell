@@ -1,0 +1,186 @@
+# AgentLite default configuration.
+#
+# Copy this file to ./agentlite.yaml (or ~/.agentlite/config.yaml) and edit it.
+# Every value can also be overridden with an environment variable:
+#
+#   AGENTLITE__SERVER__PORT=9000
+#   AGENTLITE__PROVIDER__MODEL=gpt-4o-mini
+#   AGENTLITE_API_TOKEN=...        # API authentication
+#
+# Secrets NEVER go in this file. Only the *name* of the environment variable
+# that holds an API key belongs here (provider.api_key_env).
+
+# Working directory the agent is confined to. Relative paths in tools and
+# permissions are resolved against this directory.
+workspace: ./workspace
+
+server:
+  # Loopback by default. Binding to 0.0.0.0 requires an API token.
+  host: 127.0.0.1
+  port: 8765
+  # Set AGENTLITE_API_TOKEN (never write the token here).
+  # api_token: null
+  allow_insecure_remote: false
+  cors_origins: []
+  log_level: info
+  # How many agent runs may execute at once, and how long a task string may be.
+  max_concurrent_runs: 4
+  max_task_chars: 32768
+
+provider:
+  # Preset name: openai | openrouter | gemini | ollama | groq | together |
+  # lmstudio | vllm | mock, or "openai-compatible" with an explicit base_url.
+  name: openai
+  model: gpt-4o-mini
+  # base_url: http://localhost:11434/v1
+  api_key_env: OPENAI_API_KEY
+  timeout: 90
+  max_retries: 2
+  temperature: 0.0
+
+permissions:
+  terminal:
+    enabled: true
+    require_confirmation: true
+    timeout: 30
+    max_timeout: 600
+    # Where commands start. Defaults to the workspace directory.
+    # cwd: ./workspace
+    allow_shell: false
+    allow_outside_cwd: false
+    # Empty = deny-list mode (everything except denied_commands may run,
+    # subject to confirmation). Non-empty = allow-list mode: only these
+    # regular expressions may run at all.
+    allowed_commands: []
+    denied_commands:
+      - '\brm\s+-rf\s+/(\s|$)'
+      - '\brm\s+-rf\s+/\*'
+      - '\bmkfs(\.[a-z0-9]+)?\b'
+      - '\bdd\b.*\bof=/dev/'
+      - ':\(\)\s*\{.*\}\s*;'
+      - '\bshutdown\b'
+      - '\breboot\b'
+      - '\bpoweroff\b'
+      - '\bhalt\b'
+      - '\binit\s+[06]\b'
+      - '\bsudo\b'
+      - '\bsu\s+-'
+      - '\bvisudo\b'
+      - '\bpasswd\b'
+      - '\buseradd\b'
+      - '\buserdel\b'
+      - '\bchown\s+-R\s+/'
+      - '\bchmod\s+-R\s+(777|0*7{3})\s+/'
+      - '\bcurl\b[^|]*\|\s*(sudo\s+)?(ba|z|fi)?sh'
+      - '\bwget\b[^|]*\|\s*(sudo\s+)?(ba|z|fi)?sh'
+      - '\biptables\b'
+      - '\bufw\b'
+      - '\bcrontab\s+-r\b'
+      - '\bhistory\s+-c\b'
+      - '>\s*/dev/(sd|nvme|hd)'
+      - '\bsystemctl\s+(stop|disable|mask)\b'
+    # Commands matching these need a human to confirm (when
+    # require_confirmation is true).
+    confirm_patterns:
+      - '\brm\b'
+      - '\brmdir\b'
+      - '\bmv\b'
+      - '\bcp\s+-[rR]'
+      - '\bchmod\b'
+      - '\bchown\b'
+      - '\bkill(all)?\b'
+      - '\bpkill\b'
+      - '\btar\b.*-[cx]'
+      - '\bunzip\b'
+      - '\bzip\b'
+      - '\bcurl\b'
+      - '\bwget\b'
+      - '\bssh\b'
+      - '\bscp\b'
+      - '\brsync\b'
+      - '\bgit\s+(push|reset|clean|checkout\s+--)\b'
+      - '\bgit\s+commit\b'
+      - '\bpip\s+install\b'
+      - '\bpip\s+uninstall\b'
+      - '\bnpm\s+(install|uninstall|run)\b'
+      - '\bapt(-get)?\s+(install|remove|purge)\b'
+      - '\bapk\s+add\b'
+      - '\bdnf\s+install\b'
+      - '\bbrew\s+install\b'
+      - '\bdocker\b'
+      - '\bsystemctl\b'
+      - '\bscreen\b'
+      - '\bnohup\b'
+      - '\bcrontab\b'
+    # Environment variables matching these names are not passed to commands.
+    env_denylist:
+      - '.*KEY.*'
+      - '.*TOKEN.*'
+      - '.*SECRET.*'
+      - '.*PASSWORD.*'
+      - '.*CREDENTIAL.*'
+      - '.*_AUTH.*'
+      - '.*SESSION.*'
+    env_allowlist: []
+    max_output_bytes: 32768
+    # Per-command resource ceilings (POSIX only, 0 = unlimited). They stop a
+    # runaway command from taking the machine down with it.
+    max_memory_mb: 0
+    max_cpu_seconds: 0
+    max_file_size_mb: 0
+    max_processes: 0
+
+  filesystem:
+    enabled: true
+    require_confirmation: false
+    # Directories the agent may read and write. Empty = the workspace only.
+    # Example:
+    #   allowed_paths:
+    #     - ./workspace
+    #     - /home/user/shared
+    allowed_paths: []
+    denied_paths: []
+    read_only: false
+    allow_hidden: false
+    follow_symlinks: false
+    max_read_bytes: 262144
+    max_write_bytes: 1048576
+    max_list_entries: 500
+
+  browser:
+    enabled: true
+    require_confirmation: false
+    headless: true
+    timeout_ms: 20000
+    navigation_timeout_ms: 30000
+    # Empty lists = any http(s) site. Add domains to restrict navigation.
+    allowed_domains: []
+    denied_domains: []
+    screenshot_dir: ./workspace/screenshots
+    max_page_chars: 20000
+    viewport_width: 1280
+    viewport_height: 800
+    # Refuse navigation to loopback, link-local and private addresses (the
+    # cloud metadata service at 169.254.169.254 is the classic target).
+    allow_private_networks: false
+
+security:
+  # prompt = ask a human (CLI: stdin, API: needs_confirmation round-trip)
+  # allow  = auto-approve everything (convenient, less safe)
+  # deny   = refuse anything that would need confirmation (headless default)
+  confirmation_mode: prompt
+  max_steps: 25
+  max_run_seconds: 600
+  audit_log: true
+  redact_secrets: true
+  log_tool_output: true
+  max_output_preview: 500
+  max_tool_result_chars: 8000
+
+logging:
+  dir: ~/.agentlite/logs
+  level: INFO
+  file: agentlite.jsonl
+  # Rotate the audit log so a long-lived runtime cannot fill the disk.
+  max_file_mb: 25
+  backups: 2
