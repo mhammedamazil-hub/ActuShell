@@ -87,6 +87,7 @@ def test_config_disables_tools(config):
 
 
 def test_browser_tools_report_missing_browser_binary(config, monkeypatch):
+    monkeypatch.setattr("agentlite.tools.browser.playwright_installed", lambda: True)
     monkeypatch.setattr("agentlite.tools.browser.browser_binary_installed", lambda: False)
     registry = build_registry(config)
     entry = [e for e in registry if e.tool.name == "browser.open"][0]
@@ -95,10 +96,20 @@ def test_browser_tools_report_missing_browser_binary(config, monkeypatch):
 
 
 def test_browser_tools_enabled_when_available(config, monkeypatch):
+    """Hermetic: this must pass whether or not Playwright is installed here."""
+    monkeypatch.setattr("agentlite.tools.browser.playwright_installed", lambda: True)
     monkeypatch.setattr("agentlite.tools.browser.browser_binary_installed", lambda: True)
     registry = build_registry(config)
     entry = [e for e in registry if e.tool.name == "browser.open"][0]
     assert entry.enabled is True
+
+
+def test_browser_tools_report_missing_package(config, monkeypatch):
+    monkeypatch.setattr("agentlite.tools.browser.playwright_installed", lambda: False)
+    registry = build_registry(config)
+    entry = [e for e in registry if e.tool.name == "browser.open"][0]
+    assert entry.enabled is False
+    assert "pip install" in entry.reason
 
 
 def test_registry_close_releases_the_browser(config, monkeypatch):

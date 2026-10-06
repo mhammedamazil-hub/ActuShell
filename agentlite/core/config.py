@@ -182,6 +182,11 @@ class ServerConfig:
     allow_insecure_remote: bool = False
     cors_origins: List[str] = dataclasses.field(default_factory=list)
     log_level: str = "info"
+    #: How many agent runs may execute at once. Keeps a small machine usable
+    #: when several clients call /api/run; extra requests get HTTP 429.
+    max_concurrent_runs: int = 4
+    #: Maximum length of a task string accepted by /api/run.
+    max_task_chars: int = 32768
 
     @classmethod
     def from_mapping(cls, data):
@@ -226,6 +231,13 @@ class TerminalPolicy:
     cwd: Optional[str] = None  # defaults to the workspace
     allow_shell: bool = False
     allow_outside_cwd: bool = False
+    #: POSIX resource limits applied to every command (0 = no limit). They stop
+    #: one bad command from eating the machine: the timeout is the last resort,
+    #: not the first line of defence.
+    max_memory_mb: int = 0
+    max_cpu_seconds: int = 0
+    max_file_size_mb: int = 0
+    max_processes: int = 0  # RLIMIT_NPROC is per-user: off by default
     allowed_commands: List[str] = dataclasses.field(default_factory=list)
     denied_commands: List[str] = dataclasses.field(
         default_factory=lambda: list(DEFAULT_DENIED_COMMANDS)
@@ -271,6 +283,10 @@ class BrowserPolicy:
     navigation_timeout_ms: int = 30000
     allowed_domains: List[str] = dataclasses.field(default_factory=list)
     denied_domains: List[str] = dataclasses.field(default_factory=list)
+    #: SSRF guard: refuse hosts that resolve to loopback, link-local
+    #: (169.254.169.254 = cloud metadata), private or otherwise reserved
+    #: addresses. Enable only for local testing against your own servers.
+    allow_private_networks: bool = False
     screenshot_dir: str = "./workspace/screenshots"
     max_page_chars: int = 20000
     viewport_width: int = 1280
@@ -553,6 +569,47 @@ def collect_secret_values() -> List[str]:
         if value and len(value) >= 8 and SECRET_NAME_RE.search(name):
             values.append(value)
     return values
+
+
+def security_warnings(cfg: Config) -> List[str]:
+    """Non-fatal but risky settings, surfaced by ``doctor`` and ``/api/status``."""
+    warnings: List[str] = []
+    terminal = cfg.permissions.terminal
+    filesystem = cfg.permissions.filesystem
+    browser = cfg.permissions.browser
+
+    if terminal.allow_shell:
+        warnings.append(
+            "permissions.terminal.allow_shell=true: commands run through /bin/sh, "
+            "so pipes, && and command substitution are live"
+        )
+    if terminal.allow_outside_cwd:
+        warnings.append(
+            "permissions.terminal.allow_outside_cwd=true: commands may run in any directory"
+        )
+    if not terminal.require_confirmation:
+        warnings.append(
+            "permissions.terminal.require_confirmation=false: risky commands run without asking"
+        )
+    if cfg.security.confirmation_mode == "allow":
+        warnings.append("security.confirmation_mode=allow: every action is auto-approved")
+    for root in cfg.allowed_roots:
+        if str(root) in {"/", str(Path.home())}:
+            warnings.append(
+                f"filesystem.allowed_paths contains {root}: the agent can reach everything"
+            )
+    if filesystem.allow_hidden:
+        warnings.append("filesystem.allow_hidden=true: dotfiles (keys, .env, .git) are readable")
+    if filesystem.follow_symlinks:
+        warnings.append("filesystem.follow_symlinks=true: symlinks are followed")
+    if browser.allow_private_networks:
+        warnings.append(
+            "browser.allow_private_networks=true: the browser may reach localhost and "
+            "cloud metadata endpoints (SSRF risk)"
+        )
+    if cfg.server.host not in ("127.0.0.1", "localhost", "::1") and not cfg.server.api_token:
+        warnings.append("server is bound to a public interface without an API token")
+    return warnings
 
 
 def validate_config(cfg: Config) -> List[str]:

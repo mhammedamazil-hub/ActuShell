@@ -38,6 +38,8 @@ directory when there is no config file.
 | `allow_insecure_remote` | `false` | Last-resort escape hatch to bind publicly without a token. Don't. |
 | `cors_origins` | `[]` | Browser origins allowed to call the API. Empty = no CORS. |
 | `log_level` | `info` | uvicorn log level. |
+| `max_concurrent_runs` | `4` | Runs executing at the same time. Extra callers get HTTP 429 + `Retry-After: 5`. |
+| `max_task_chars` | `32768` | Longest accepted `task` string. Longer tasks get HTTP 413. |
 
 ## `provider`
 
@@ -70,7 +72,11 @@ directory when there is no config file.
 | `confirm_patterns` | see below | Regexes that need confirmation when `require_confirmation` is true. |
 | `env_denylist` | `['.*KEY.*', '.*TOKEN.*', ...]` | Env var *names* withheld from commands. |
 | `env_allowlist` | `[]` | Env var names to pass even if they match the denylist. |
-| `max_output_bytes` | `32768` | stdout/stderr cap (truncated with a marker). |
+| `max_output_bytes` | `32768` | stdout/stderr cap (truncated with a marker). Read incrementally, so a chatty command costs memory only up to this cap. |
+| `max_memory_mb` | `0` | Per-command address-space limit (`RLIMIT_AS`). `0` = unlimited. POSIX only. |
+| `max_cpu_seconds` | `0` | Per-command CPU seconds (`RLIMIT_CPU`). `0` = unlimited. |
+| `max_file_size_mb` | `0` | Largest file a command may write (`RLIMIT_FSIZE`). `0` = unlimited. |
+| `max_processes` | `0` | Process count per command (`RLIMIT_NPROC`). `0` = unlimited. |
 
 Defaults refuse, among others: `sudo`, `su -`, `rm -rf /`, `mkfs`, `dd of=/dev/*`,
 fork bombs, `shutdown`, `reboot`, `init 0`, `passwd`, `useradd`, `chmod -R 777 /`,
@@ -91,7 +97,7 @@ Defaults ask for confirmation for: `rm`, `rmdir`, `mv`, `cp -r`, `chmod`, `chown
 | `denied_paths` | `[]` | Glob patterns refused even inside allowed paths (e.g. `*.pem`). |
 | `read_only` | `false` | Refuse all writes. |
 | `allow_hidden` | `false` | Allow dotfiles/dot-directories. |
-| `follow_symlinks` | `false` | Refuse symlinks (they are the classic escape trick). |
+| `follow_symlinks` | `false` | Follow symlinks **that stay inside `allowed_paths`**. Escaping links are always refused, before and after the file is opened. |
 | `max_read_bytes` | `262144` | Read cap; longer files are truncated. |
 | `max_write_bytes` | `1048576` | Write cap; larger writes are refused. |
 | `max_list_entries` | `500` | Directory listing cap. |
@@ -110,6 +116,7 @@ Defaults ask for confirmation for: `rm`, `rmdir`, `mv`, `cp -r`, `chmod`, `chown
 | `screenshot_dir` | `./workspace/screenshots` | Screenshots are written here and nowhere else. |
 | `max_page_chars` | `20000` | `read_page` text cap. |
 | `viewport_width` / `viewport_height` | `1280` / `800` | Browser viewport. |
+| `allow_private_networks` | `false` | When false, hosts resolving to loopback / link-local / private / reserved addresses are refused (SSRF guard). Hosts that do not resolve are refused too. |
 | `user_agent` | `null` | Custom user agent string. |
 
 ## `security`
@@ -123,7 +130,7 @@ Defaults ask for confirmation for: `rm`, `rmdir`, `mv`, `cp -r`, `chmod`, `chown
 | `redact_secrets` | `true` | Scrub secret-looking values from logs. |
 | `log_tool_output` | `true` | Include a preview of tool output in the audit log. |
 | `max_output_preview` | `500` | Characters of output kept per audit entry. |
-| `max_tool_result_chars` | `8000` | Cap on the result text handed back to the model. |
+| `max_tool_result_chars` | `8000` | Cap on the **serialised** result handed back to the model (output *and* metadata). The result is always valid JSON. |
 
 ## `logging`
 
@@ -156,3 +163,18 @@ Defaults ask for confirmation for: `rm`, `rmdir`, `mv`, `cp -r`, `chmod`, `chown
 * [`examples/local_ollama.yaml`](../examples/local_ollama.yaml) — local model, no
   external API at all.
 * [`agentlite.yaml.example`](../agentlite.yaml.example) — every key, annotated.
+
+---
+
+## Settings that weaken the security model
+
+These are all off by default for a reason. `agentlite doctor` and
+`GET /api/status` → `security_warnings` report them when they are on:
+
+| Setting | What it costs you |
+|---|---|
+| `security.confirmation_mode: allow` | Nothing is ever confirmed with a human. |
+| `permissions.terminal.allow_shell: true` | `;`, `&&`, `|`, backticks and command substitution become live syntax. |
+| `permissions.browser.allow_private_networks: true` | The browser can reach localhost, your LAN and the cloud metadata service. |
+| `permissions.filesystem.allowed_paths: ["/"]` | "Confined to the workspace" stops being true. |
+| `server.allow_insecure_remote: true` | The API can be bound publicly with no token. |

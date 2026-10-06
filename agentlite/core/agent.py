@@ -12,7 +12,6 @@ explicit decision (that is how the HTTP API does it).
 from __future__ import annotations
 
 import logging
-import os
 import platform
 import time
 from dataclasses import dataclass, field
@@ -337,11 +336,3 @@ def _default_audit(config: Config) -> AuditLogger:
     return build_audit_logger(
         config.log_path, config.security.audit_log, config.security.redact_secrets
     )
-
-
-def _default_deadline(config: Config) -> float:  # pragma: no cover - helper for callers
-    return time.monotonic() + config.security.max_run_seconds
-
-
-def _env_summary() -> str:  # pragma: no cover - debugging aid
-    return f"{platform.python_version()} on {os.name}"

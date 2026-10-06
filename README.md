@@ -53,7 +53,7 @@ Measured on a 2-core / 4 GB machine (the project's target hardware):
 
 ---
 
-## Status: v0.1.0 MVP
+## Status: v0.2.0 MVP
 
 What is implemented and tested today:
 
@@ -67,7 +67,12 @@ What is implemented and tested today:
 | Provider abstraction | ✅ one real provider: OpenAI-compatible (+ scripted mock for tests) |
 | HTTP API | ✅ `/api/run`, `/api/status`, `/api/tools`, confirmations, audit tail |
 | CLI | ✅ `start`, `doctor`, `tools`, `config`, `run`, `version` |
-| Tests | ✅ 203 tests, all offline |
+| Tests | ✅ 252 tests, all offline (43 of them security boundaries) |
+
+v0.2.0 is a hardening release: it closes a terminal memory-exhaustion hole, an
+SSRF hole in the browser, a filesystem symlink/FIFO escape and several smaller
+gaps. See [CHANGELOG.md](CHANGELOG.md) — it includes one deliberate breaking
+change (`filesystem.follow_symlinks`).
 
 [`docs/ci-workflow.yml.example`](docs/ci-workflow.yml.example) has a ready-made
 GitHub Actions workflow (tests on Python 3.9-3.12 + wheel build).
@@ -101,7 +106,7 @@ agentlite doctor
 ```
 
 ```
-AgentLite 0.1.0 - doctor
+AgentLite 0.2.0 - doctor
 
 [ ok ] python: 3.11.2
 [ ok ] config file: /home/user/agentlite.yaml
@@ -136,7 +141,7 @@ agentlite start
 ```
 
 ```
-AgentLite 0.1.0
+AgentLite 0.2.0
   workspace : /home/user/workspace
   provider  : openai / gpt-4o-mini
   listening : http://127.0.0.1:8765
@@ -279,9 +284,13 @@ Returns stdout, stderr, exit code, working directory and whether it timed out.
   `permissions.terminal.allow_shell: true` if you really want `/bin/sh -c`.
 * Runs in its own process group, so a timeout kills the whole tree, not just the
   parent.
+* Output is capped in constant memory, so `yes` cannot fill your RAM.
+* Optional per-command limits: `max_memory_mb`, `max_cpu_seconds`,
+  `max_file_size_mb`, `max_processes`.
 * Environment variables whose names look like secrets (`*KEY*`, `*TOKEN*`,
   `*SECRET*`, ...) are not passed to the command.
-* Working directory is confined to `permissions.terminal.cwd`.
+* Working directory is confined to `permissions.terminal.cwd` and resolved, so a
+  symlink cannot be used to run commands elsewhere.
 
 ### `filesystem.list` / `filesystem.read` / `filesystem.write`
 
@@ -292,8 +301,12 @@ Returns stdout, stderr, exit code, working directory and whether it timed out.
 
 * Paths are resolved and then checked against `allowed_paths` — `../etc/passwd`
   and `/etc/passwd` are both refused.
-* Symlinks are refused by default (`follow_symlinks: false`), so a link cannot be
-  used to step outside the workspace.
+* Symlinks are refused by default (`follow_symlinks: false`). With
+  `follow_symlinks: true` they are followed **only inside the allowed roots** —
+  the check is repeated after the file is opened, so a swap mid-operation is
+  caught too.
+* Only regular files and directories are opened: FIFOs, sockets and devices are
+  refused (a FIFO would otherwise hang the read forever).
 * Hidden files (dotfiles) are refused by default.
 * `read_only: true` turns the whole filesystem tool read-only.
 * Size limits for reads (truncation) and writes (refusal).
@@ -309,6 +322,12 @@ Backed by Playwright/Chromium behind a `BrowserBackend` interface, so another
 engine can be dropped in without touching the tools or the loop. Screenshots are
 written inside the workspace; domains can be restricted with `allowed_domains` /
 `denied_domains`.
+
+Navigation is checked against more than the hostname: the host is resolved and
+loopback, link-local, private and reserved addresses are refused, so the browser
+cannot be used to reach `http://localhost:8080` or
+`http://169.254.169.254/latest/meta-data/`. Redirects are re-checked after the
+fact. Set `permissions.browser.allow_private_networks: true` to allow it.
 
 Browser automation uses normal, user-facing browser interfaces. AgentLite contains
 nothing designed to bypass CAPTCHAs, anti-bot systems, logins, paywalls, rate
@@ -329,13 +348,27 @@ AgentLite can control a real computer, so security is the product, not a feature
 | Destructive commands (`sudo`, `rm -rf /`, `mkfs`, `curl \| sh`, ...) | **denied**, always |
 | Risky commands (`rm`, `mv`, `pip install`, `git push`, `curl`, ...) | **confirmation required** |
 | Command timeout | 30 s (max 600 s), process tree killed |
+| Command output | capped in constant memory (32 KB) |
+| Private / loopback / metadata addresses from the browser | **denied** (SSRF) |
+| Redirects to a private address | **denied** after the fact |
 | Steps per run | 25 |
 | Wall clock per run | 600 s |
+| Concurrent runs | 4 (extra callers get HTTP 429) |
+| Task length | 32,768 characters (longer → HTTP 413) |
 | API bind address | `127.0.0.1` |
 | API authentication | required when bound to anything but loopback |
 | Secret storage | environment variables only |
 | Environment leaks | secret-looking env vars are withheld from commands |
 | Audit trail | JSONL log of every call, decision and duration |
+| Audit redaction | known secrets **and** credential shapes (`sk-…`, `AKIA…`, JWTs, `Bearer …`) |
+| Dangerous settings | reported by `agentlite doctor` and `/api/status` |
+
+**AgentLite is not a sandbox.** It runs as your user, and an allowed command can
+do anything your user can do. The controls above decide *which* actions reach the
+machine; they do not constrain what an allowed action can do once it starts.
+Prompt injection is not solved by any of this: if a web page tells the model to
+run something, the permission system is the only guardrail. Read
+[docs/SECURITY.md](docs/SECURITY.md) for the full model and its limits.
 
 **Confirmation modes** (`security.confirmation_mode`):
 
@@ -481,14 +514,20 @@ Design notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Testing
 
 ```bash
-pytest                      # 203 tests, offline, ~12 s
-ruff check agentlite tests  # lint
+pytest                            # 252 tests, offline, ~17 s
+pytest tests/test_security.py -v  # the security boundaries only
+ruff check agentlite tests        # lint
 ```
 
 The suite covers the permission system, terminal execution and timeouts,
 filesystem restrictions, the tool registry, the provider abstraction (including a
 real HTTP round trip), the API (including the confirmation flow and token auth),
 the CLI and a full end-to-end run through a live uvicorn server.
+
+`tests/test_security.py` holds the tests that exist to fail loudly if a control
+is weakened: the SSRF decision table, redirect revalidation, symlink and FIFO
+handling, the open-time swap, output and resource limits, process-tree cleanup,
+payload caps, credential redaction, and the API's size and concurrency limits.
 
 ---
 
@@ -507,6 +546,9 @@ reliable. See [ROADMAP.md](ROADMAP.md).
 Small, tested, boring pull requests are very welcome — especially for the three MVP
 tools. Start with [CONTRIBUTING.md](CONTRIBUTING.md); the short version is
 `pip install -e ".[browser,dev]"`, `pytest`, `ruff check .`.
+
+Changes to the terminal, filesystem, browser or permission engine should come
+with a test in `tests/test_security.py` that fails without the change.
 
 ## License
 

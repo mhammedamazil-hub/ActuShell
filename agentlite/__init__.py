@@ -5,6 +5,6 @@ sits between an AI model and a real machine, and exposes a controlled set of
 tools (terminal, filesystem, browser) behind an explicit permission system.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

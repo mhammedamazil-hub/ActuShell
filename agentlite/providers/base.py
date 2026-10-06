@@ -82,6 +82,9 @@ class LLMProvider(ABC):
         """Operator-facing description (never includes the key itself)."""
         return {"name": self.name, "model": self.model}
 
+    def close(self) -> None:  # noqa: B027 - optional hook, not part of the contract
+        """Release resources. Providers that hold a connection override this."""
+
 
 # --------------------------------------------------------------------------- #
 # Tool name mapping

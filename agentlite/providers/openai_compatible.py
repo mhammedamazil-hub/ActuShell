@@ -99,14 +99,23 @@ class OpenAICompatibleProvider(LLMProvider):
         }
 
     def close(self) -> None:
+        """Close the HTTP client (called by the API on shutdown)."""
         if self._client is not None and self._owns_client:
-            self._client.close()
+            try:
+                self._client.close()
+            except Exception as exc:  # noqa: BLE001 - teardown is best effort
+                logger.debug("error closing provider client: %s", exc)
+            self._client = None
 
     # -- transport --------------------------------------------------------- #
 
     def _client_or_create(self) -> httpx.Client:
         if self._client is None:
-            self._client = httpx.Client(timeout=self.config.timeout)
+            self._client = httpx.Client(
+                timeout=self.config.timeout,
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+                follow_redirects=False,
+            )
         return self._client
 
     def _headers(self) -> Dict[str, str]:
@@ -129,6 +138,8 @@ class OpenAICompatibleProvider(LLMProvider):
             except httpx.HTTPError as exc:
                 last_error = f"transport error: {exc}"
                 logger.warning("provider transport error (attempt %s): %s", attempt + 1, exc)
+                if attempt >= self.config.max_retries:
+                    break
             else:
                 if response.status_code in RETRY_STATUS and attempt < self.config.max_retries:
                     last_error = f"HTTP {response.status_code}: {response.text[:200]}"

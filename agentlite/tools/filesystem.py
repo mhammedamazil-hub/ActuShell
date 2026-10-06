@@ -9,14 +9,18 @@ only ever reach what the operator configured.
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..core.models import RiskLevel
-from ..core.permissions import PermissionRequest
+from ..core.permissions import PermissionRequest, is_inside
 from .base import Tool, ToolContext, ToolError, ToolOutput
 
 TEXT_SAMPLE = 2048
+#: Flags used when the configuration refuses symlinks.
+_NO_FOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 
 
 class FilesystemToolBase(Tool):
@@ -71,6 +75,110 @@ class FilesystemToolBase(Tool):
     def timeout_for(self, arguments: Dict[str, Any]) -> int:
         return 10
 
+    # -- safe file handling ------------------------------------------------ #
+
+    def _real_path_of_fd(self, fd: int) -> Optional[Path]:
+        """Best-effort real path of an open descriptor (Linux: /proc)."""
+        try:
+            return Path(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:  # pragma: no cover - not Linux, or fd already closed
+            return None
+
+    def _assert_still_inside(self, fd: int, path: Path, context: ToolContext) -> None:
+        """Re-check containment *after* opening.
+
+        The permission engine runs before the file is opened. Between the two,
+        a directory component can be replaced by a symlink, so we resolve the
+        descriptor and check again.
+        """
+        real = self._real_path_of_fd(fd)
+        if real is None:  # pragma: no cover - non-Linux
+            real = Path(os.path.realpath(str(path)))
+        if not is_inside(real, context.config.allowed_roots):
+            raise ToolError(f"path resolves outside the allowed paths: {real}")
+
+    def _open_verified(
+        self,
+        path: Path,
+        context: ToolContext,
+        flags: int,
+        *,
+        directory: bool = False,
+    ) -> int:
+        """Open a path without following a late symlink, and verify it after.
+
+        Returns an open file descriptor. The caller must close it.
+        """
+        policy = context.config.permissions.filesystem
+        open_flags = flags | _NO_FOLLOW if not policy.follow_symlinks else flags
+        if directory:
+            open_flags |= _DIRECTORY
+
+        # Inspect the path *before* opening it: opening a FIFO blocks until a
+        # writer appears, which would hang the runtime past every timeout.
+        try:
+            pre = os.lstat(path)
+        except FileNotFoundError:
+            pre = None  # a new file (write) or a genuinely missing path
+        except OSError as exc:
+            raise ToolError(f"cannot access {path}: {exc.strerror or exc}") from exc
+        if pre is not None:
+            if stat.S_ISLNK(pre.st_mode) and not policy.follow_symlinks:
+                raise ToolError(f"refusing to follow symlink: {path}")
+            if not stat.S_ISLNK(pre.st_mode):
+                if directory and not stat.S_ISDIR(pre.st_mode):
+                    raise ToolError(f"not a directory: {path}")
+                if not directory and not stat.S_ISREG(pre.st_mode):
+                    raise ToolError(f"not a regular file: {path}")
+        if not directory:
+            # Belt and braces: a regular file ignores O_NONBLOCK, a FIFO does not.
+            open_flags |= getattr(os, "O_NONBLOCK", 0)
+
+        try:
+            fd = os.open(path, open_flags, 0o644)
+        except FileNotFoundError as exc:
+            raise ToolError(f"no such file or directory: {path}") from exc
+        except IsADirectoryError as exc:
+            raise ToolError(f"is a directory: {path}") from exc
+        except NotADirectoryError as exc:
+            raise ToolError(f"not a directory: {path}") from exc
+        except OSError as exc:
+            raise ToolError(f"cannot open {path}: {exc.strerror or exc}") from exc
+
+        try:
+            info = os.fstat(fd)
+            if not policy.follow_symlinks:
+                # The descriptor and the path must still be the same inode.
+                try:
+                    on_disk = os.lstat(path)
+                except OSError as exc:  # pragma: no cover - vanished mid-flight
+                    raise ToolError(f"path disappeared while opening: {path}") from exc
+                if (info.st_dev, info.st_ino) != (on_disk.st_dev, on_disk.st_ino) or stat.S_ISLNK(
+                    on_disk.st_mode
+                ):
+                    raise ToolError(f"path changed while opening it: {path}")
+            if directory and not stat.S_ISDIR(info.st_mode):
+                raise ToolError(f"not a directory: {path}")
+            if not directory and not stat.S_ISREG(info.st_mode):
+                # FIFOs and devices would block forever or stream endlessly.
+                raise ToolError(f"not a regular file: {path}")
+            self._assert_still_inside(fd, path, context)
+        except Exception:
+            os.close(fd)
+            raise
+        return fd
+
+    def _ensure_parent(self, path: Path, context: ToolContext) -> None:
+        """Create parent directories and confirm they are still inside the roots."""
+        parent = path.parent
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ToolError(f"cannot create directory {parent}: {exc.strerror or exc}") from exc
+        real = Path(os.path.realpath(str(parent)))
+        if not is_inside(real, context.config.allowed_roots):
+            raise ToolError(f"path resolves outside the allowed paths: {real}")
+
 
 class FilesystemListTool(FilesystemToolBase):
     name = "filesystem.list"
@@ -93,14 +201,18 @@ class FilesystemListTool(FilesystemToolBase):
 
     def execute(self, arguments: Dict[str, Any], context: ToolContext) -> ToolOutput:
         path = self._resolve(arguments, context)
-        if not path.exists():
-            raise ToolError(f"no such directory: {path}")
-        if not path.is_dir():
-            raise ToolError(f"not a directory: {path}")
-
         policy = context.config.permissions.filesystem
+        # Opening the directory first means the listing cannot drift to another
+        # directory if a component is swapped between check and use.
+        fd = self._open_verified(path, context, os.O_RDONLY, directory=True)
+        try:
+            return self._list_fd(fd, path, policy)
+        finally:
+            os.close(fd)
+
+    def _list_fd(self, fd: int, path: Path, policy: Any) -> ToolOutput:
         entries: List[Dict[str, Any]] = []
-        with os.scandir(path) as iterator:
+        with os.scandir(fd) as iterator:
             for entry in iterator:
                 try:
                     stat = entry.stat(follow_symlinks=False)
@@ -163,8 +275,17 @@ class FilesystemReadTool(FilesystemToolBase):
 
         policy = context.config.permissions.filesystem
         limit = min(int(arguments.get("max_bytes") or policy.max_read_bytes), policy.max_read_bytes)
-        with open(path, "rb") as handle:
-            data = handle.read(limit + 1)
+        fd = self._open_verified(path, context, os.O_RDONLY)
+        try:
+            data = b""
+            while len(data) <= limit:
+                chunk = os.read(fd, min(65536, limit + 1 - len(data)))
+                if not chunk:
+                    break
+                data += chunk
+        finally:
+            os.close(fd)
+
         truncated = len(data) > limit
         data = data[:limit]
 
@@ -209,14 +330,20 @@ class FilesystemWriteTool(FilesystemToolBase):
                 f"content is {len(encoded)} bytes, limit is {policy.max_write_bytes} "
                 "(filesystem.max_write_bytes)"
             )
-        if path.exists() and path.is_dir():
-            raise ToolError(f"is a directory: {path}")
-
         existed = path.exists()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        mode = "ab" if arguments.get("append") else "wb"
-        with open(path, mode) as handle:
-            handle.write(encoded)
+        if existed and path.is_dir():
+            raise ToolError(f"is a directory: {path}")
+        self._ensure_parent(path, context)
+
+        flags = os.O_WRONLY | os.O_CREAT
+        flags |= os.O_APPEND if arguments.get("append") else os.O_TRUNC
+        fd = self._open_verified(path, context, flags)
+        try:
+            os.write(fd, encoded)
+        except OSError as exc:
+            raise ToolError(f"cannot write {path}: {exc.strerror or exc}") from exc
+        finally:
+            os.close(fd)
 
         return ToolOutput(
             output=f"wrote {len(encoded)} bytes to {path}",
@@ -229,13 +356,9 @@ class FilesystemWriteTool(FilesystemToolBase):
         )
 
 
-# Convenience alias used by the registry and documentation.
+# Backwards-compatible alias (AgentLite 0.1.0 exposed this name).
 FilesystemTool = FilesystemListTool
 
 
 def filesystem_tools() -> list:
     return [FilesystemListTool(), FilesystemReadTool(), FilesystemWriteTool()]
-
-
-def _unused(_: Optional[str]) -> None:  # pragma: no cover
-    return None

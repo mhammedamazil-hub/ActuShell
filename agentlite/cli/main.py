@@ -17,6 +17,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Optional
 
+import yaml
+
 from .. import __version__
 from ..core.config import (
     IMPLEMENTED_PROVIDERS,
@@ -25,6 +27,7 @@ from ..core.config import (
     default_config_path,
     find_config_file,
     load_config,
+    security_warnings,
     validate_config,
 )
 from ..core.models import RunStatus
@@ -51,10 +54,17 @@ def _status(kind: str, label: str, detail: str = "") -> None:
 
 
 def _load(args: argparse.Namespace) -> Config:
+    """Load the configuration, or exit with a message a human can act on."""
     try:
         return load_config(getattr(args, "config", None))
     except FileNotFoundError as exc:
         _status(FAIL, "configuration", str(exc))
+        _print("  Run 'agentlite config --init agentlite.yaml' to create one.")
+        raise SystemExit(2) from exc
+    except yaml.YAMLError as exc:
+        found = find_config_file(getattr(args, "config", None))
+        _status(FAIL, "configuration", f"{found}: invalid YAML")
+        _print(f"  {str(exc).splitlines()[0] if str(exc) else exc}")
         raise SystemExit(2) from exc
 
 
@@ -128,6 +138,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for problem in validate_config(config):
         _status(FAIL, "config", problem)
         problems += 1
+    for warning in security_warnings(config):
+        _status(WARN, "security", warning)
 
     # Workspace --------------------------------------------------------- #
     workspace = config.workspace_root
@@ -282,7 +294,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         handler = None  # -> default mode handler (deny when non-interactive)
 
     agent = Agent.from_config(config, confirmation_handler=handler)
-    result = agent.run(args.task, max_steps=args.max_steps)
+    _require_credentials(config)
+    try:
+        result = agent.run(args.task, max_steps=args.max_steps)
+    finally:
+        closer = getattr(agent.provider, "close", None)
+        if callable(closer):
+            closer()
 
     if args.json:
         _print(json.dumps(result.to_dict(), indent=2))
@@ -304,6 +322,26 @@ def cmd_run(args: argparse.Namespace) -> int:
             _print("  Re-run with --yes to approve, or use the API to answer it.")
 
     return 0 if result.status is RunStatus.COMPLETED else 1
+
+
+def _require_credentials(config: Config) -> None:
+    """Exit early with a useful message instead of a provider 401 later."""
+    from ..providers.openai_compatible import resolve_api_key
+
+    preset = (config.provider.name or "").lower()
+    if preset in {"mock"} or resolve_api_key(config.provider):
+        return
+    local = preset in {"ollama", "lmstudio", "vllm"}
+    _status(FAIL, "api key", f"${config.provider.api_key_env} is not set")
+    if local:
+        _print(f"  Expected a local server at {config.provider.effective_base_url}")
+        _print("  Start it (e.g. 'ollama serve') or export the key if it needs one.")
+    else:
+        _print(f"  export {config.provider.api_key_env}=...   # then re-run")
+        _print("  Or try AgentLite without a key:")
+        _print("    python examples/fake_llm_server.py &")
+        _print("    AGENTLITE_BASE_URL=http://127.0.0.1:8100/v1 agentlite run 'list the workspace'")
+    raise SystemExit(2)
 
 
 def cmd_version(args: argparse.Namespace) -> int:

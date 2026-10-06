@@ -195,6 +195,62 @@ def test_backend_interface_is_enforced():
     assert INSTALL_HINT.startswith("Playwright is not installed")
 
 
+def test_a_wedged_browser_cannot_hang_the_run(config):
+    """The wait for the browser thread is bounded, and close() recovers."""
+    import time
+
+    from agentlite.tools.base import ToolError
+    from agentlite.tools.browser import BrowserSession
+
+    class WedgedBackend:
+        def __init__(self, hang=False):
+            self.hang = hang
+            self.closed = False
+
+        def open(self, url, timeout_ms):
+            if self.hang:
+                time.sleep(30)
+            return {"url": url, "title": "t"}
+
+        def click(self, selector, timeout_ms):
+            return {"url": "https://example.com", "title": "t"}
+
+        def type_text(self, selector, text, timeout_ms):
+            return {"selector": selector, "characters": len(text)}
+
+        def read_page(self, max_chars):
+            return {"url": "https://example.com", "title": "t", "text": ""}
+
+        def screenshot(self, path, timeout_ms):
+            return {"path": str(path), "bytes": 0}
+
+        def back(self, timeout_ms):
+            return {"url": "https://example.com", "title": "t"}
+
+        def close(self):
+            self.closed = True
+
+        @property
+        def is_open(self):
+            return True
+
+    wedged = WedgedBackend(hang=True)
+    session = BrowserSession(config, backend=wedged)
+    with pytest.raises(TimeoutError):
+        session.call(lambda backend: backend.open("https://example.com", 1000), timeout=0.2)
+
+    # Until the session is closed, further calls are refused rather than queued
+    # behind the stuck one.
+    with pytest.raises(ToolError, match="stuck"):
+        session.call(lambda backend: backend.click("a", 1000), timeout=1)
+
+    session.close()
+    assert wedged.closed is True
+    healthy = WedgedBackend()
+    session._backend = healthy
+    assert session.call(lambda backend: backend.click("a", 1000), timeout=5)["url"]
+
+
 def test_browser_tools_share_one_session(config):
     tools = browser_tools(config)
     sessions = {id(tool.session) for tool in tools}

@@ -7,13 +7,28 @@ JSONL file. This is what makes an AgentLite session reviewable after the fact.
 from __future__ import annotations
 
 import json
-import os
+import re
 import threading
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .models import utc_now_iso
+
+REDACTED = "***redacted***"
+
+
+#: Shapes of credentials that must never reach a log file, even if the user
+#: printed one into a tool result.
+SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}\b"),  # OpenAI
+    re.compile(r"\bgsk_[A-Za-z0-9]{16,}\b"),  # Groq
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),  # Slack
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),  # AWS access key id
+    re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),  # GitHub token
+    re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b"),  # JWT
+    re.compile(r"(?i)\b(bearer|authorization:\s*bearer)\s+[A-Za-z0-9._\-]{12,}"),
+)
 
 
 class Redactor:
@@ -24,12 +39,14 @@ class Redactor:
         self.enabled = enabled
 
     def scrub(self, text: Any) -> Any:
-        if not self.enabled or not isinstance(text, str) or not self._secrets:
+        if not self.enabled or not isinstance(text, str):
             return text
         out = text
         for secret in self._secrets:
             if secret in out:
-                out = out.replace(secret, "***redacted***")
+                out = out.replace(secret, REDACTED)
+        for pattern in SECRET_PATTERNS:
+            out = pattern.sub(REDACTED, out)
         return out
 
     def scrub_mapping(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -49,7 +66,9 @@ class AuditLogger:
     ):
         self.path = Path(path) if path else None
         self.enabled = enabled and self.path is not None
-        self.redactor = redactor or Redactor(enabled=False)
+        # Redaction is on by default: credential *shapes* are always scrubbed,
+        # even when nobody told us which secrets to look for.
+        self.redactor = redactor or Redactor(enabled=True)
         self._lock = threading.Lock()
         if self.enabled and self.path is not None:
             try:
@@ -94,8 +113,3 @@ def build_audit_logger(path: Optional[Path], enabled: bool, redact: bool) -> Aud
 
     redactor = Redactor(collect_secret_values() if redact else [], enabled=redact)
     return AuditLogger(path=path, enabled=enabled, redactor=redactor)
-
-
-def _default_log_dir() -> Path:
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".agentlite")
-    return Path(base) / "logs"

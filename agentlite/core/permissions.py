@@ -16,7 +16,9 @@ Effect ladder
 from __future__ import annotations
 
 import fnmatch
+import ipaddress
 import re
+import socket
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -212,8 +214,7 @@ class PermissionEngine:
             )
 
         roots = self.config.allowed_roots
-        inside = any(path == root or root in path.parents for root in roots)
-        if not inside:
+        if not is_inside(path, roots):
             roots_text = ", ".join(str(r) for r in roots)
             return Decision(
                 Effect.DENY,
@@ -255,6 +256,15 @@ class PermissionEngine:
     # -- browser ----------------------------------------------------------- #
 
     def check_url(self, url: str) -> Decision:
+        """Allow navigation to `url`?
+
+        Three checks, in order: scheme, domain policy, then - unless
+        ``browser.allow_private_networks`` is set - the addresses the host
+        resolves to. Without the last one the browser is a ready-made SSRF
+        client: ``http://localhost:8080``, ``http://169.254.169.254/latest/...``
+        (cloud metadata) and ``http://2130706433`` (127.0.0.1 written in
+        decimal) all look like ordinary hostnames.
+        """
         policy = self.config.permissions.browser
         if not policy.enabled:
             return Decision(Effect.DENY, "browser tool is disabled", rule="browser.enabled")
@@ -264,6 +274,9 @@ class PermissionEngine:
                 Effect.DENY, f"unsupported URL scheme: {parsed.scheme!r}", rule="browser.scheme"
             )
         host = (parsed.hostname or "").lower()
+        if not host:
+            return Decision(Effect.DENY, "URL has no host", rule="browser.host")
+
         for domain in policy.denied_domains:
             if _domain_matches(host, domain):
                 return Decision(
@@ -276,7 +289,10 @@ class PermissionEngine:
                     f"domain {host} is not in browser.allowed_domains",
                     rule="browser.allowed_domains",
                 )
-        return Decision(Effect.ALLOW, "url allowed", rule="browser.default")
+
+        if policy.allow_private_networks:
+            return Decision(Effect.ALLOW, "url allowed", rule="browser.default")
+        return _check_host_addresses(host)
 
     def _evaluate_browser(self, request: PermissionRequest) -> Decision:
         policy = self.config.permissions.browser
@@ -291,6 +307,97 @@ class PermissionEngine:
                 rule="browser.require_confirmation",
             )
         return Decision(Effect.ALLOW, "browser action allowed", rule="browser.default")
+
+
+def is_inside(path: Path, roots: Sequence[Path]) -> bool:
+    """True when `path` is one of `roots` or lives below one of them.
+
+    Shared by the permission engine (before an action) and by the filesystem
+    tools (after opening, when the path may have been swapped underneath us).
+    """
+    return any(path == root or root in path.parents for root in roots)
+
+
+# --------------------------------------------------------------------------- #
+# SSRF helpers
+# --------------------------------------------------------------------------- #
+
+#: Hosts that always mean "this machine", whatever they resolve to.
+LOCAL_HOST_NAMES = {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
+
+
+def _numeric_host_to_ip(host: str) -> Optional[str]:
+    """Convert decimal/hex host forms such as ``2130706433`` to dotted IPv4."""
+    text = (host or "").strip()
+    try:
+        if text.lower().startswith("0x"):
+            value = int(text, 16)
+        elif text.isdigit():
+            value = int(text, 10)
+        else:
+            return None
+    except ValueError:
+        return None
+    if 0 <= value <= 0xFFFFFFFF:
+        return str(ipaddress.IPv4Address(value))
+    return None
+
+
+def _address_is_forbidden(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    )
+
+
+def _check_host_addresses(host: str) -> Decision:
+    """Refuse hosts that are - or resolve to - private/loopback/link-local IPs."""
+    if host in LOCAL_HOST_NAMES or host.endswith(".localhost"):
+        return Decision(
+            Effect.DENY,
+            f"{host} is a loopback name (set browser.allow_private_networks to override)",
+            rule="browser.allow_private_networks",
+        )
+
+    literal = _numeric_host_to_ip(host) or host
+    try:
+        parsed = ipaddress.ip_address(literal)
+    except ValueError:
+        parsed = None
+    if parsed is not None and _address_is_forbidden(parsed):
+        return Decision(
+            Effect.DENY,
+            f"{host} is a loopback, private or link-local address "
+            "(set browser.allow_private_networks to override)",
+            rule="browser.allow_private_networks",
+        )
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError, OSError):
+        # Fail closed: a host we cannot resolve cannot be proven public.
+        return Decision(
+            Effect.DENY, f"could not resolve {host!r} (refusing to navigate)", rule="browser.dns"
+        )
+
+    for info in infos:
+        address = info[4][0]
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:  # pragma: no cover - exotic sockaddr
+            continue
+        if _address_is_forbidden(parsed):
+            return Decision(
+                Effect.DENY,
+                f"{host} resolves to {address}, a private or reserved address "
+                "(set browser.allow_private_networks to override)",
+                rule="browser.allow_private_networks",
+            )
+    return Decision(Effect.ALLOW, "url allowed", rule="browser.default")
 
 
 def _domain_matches(host: str, domain: str) -> bool:

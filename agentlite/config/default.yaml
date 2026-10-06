@@ -23,6 +23,9 @@ server:
   allow_insecure_remote: false
   cors_origins: []
   log_level: info
+  # How many agent runs may execute at once, and how long a task string may be.
+  max_concurrent_runs: 4
+  max_task_chars: 32768
 
 provider:
   # Preset name: openai | openrouter | gemini | ollama | groq | together |
@@ -120,6 +123,12 @@ permissions:
       - '.*SESSION.*'
     env_allowlist: []
     max_output_bytes: 32768
+    # Per-command resource ceilings (POSIX only, 0 = unlimited). They stop a
+    # runaway command from taking the machine down with it.
+    max_memory_mb: 0
+    max_cpu_seconds: 0
+    max_file_size_mb: 0
+    max_processes: 0
 
   filesystem:
     enabled: true
@@ -151,6 +160,9 @@ permissions:
     max_page_chars: 20000
     viewport_width: 1280
     viewport_height: 800
+    # Refuse navigation to loopback, link-local and private addresses (the
+    # cloud metadata service at 169.254.169.254 is the classic target).
+    allow_private_networks: false
 
 security:
   # prompt = ask a human (CLI: stdin, API: needs_confirmation round-trip)

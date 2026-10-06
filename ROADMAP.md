@@ -1,7 +1,21 @@
 # Roadmap
 
-AgentLite is at **v0.1.0 (MVP)**. The rule for this project is simple: the three MVP
-tools have to be boring before anything new is started.
+AgentLite is at **v0.2.0 (hardened MVP)**. The rule for this project is simple: the
+three MVP tools have to be boring before anything new is started.
+
+## Done (v0.2.0)
+
+- [x] Terminal memory safety: output capped in constant memory
+- [x] `permissions.terminal.timeout` actually applied
+- [x] Per-command resource limits (memory, CPU, file size, process count)
+- [x] Browser SSRF guard: private / loopback / link-local / metadata addresses refused
+- [x] Redirect revalidation after navigation
+- [x] Browser thread-safety (one dedicated Playwright thread)
+- [x] Filesystem: TOCTOU-safe opens, non-regular files refused, symlinks cannot escape
+- [x] Capped model payloads (output *and* metadata), always valid JSON
+- [x] Server concurrency and task-size limits
+- [x] Credential-shape redaction in the audit log
+- [x] Dangerous-setting warnings in `doctor` and `/api/status`
 
 ## Done (v0.1.0)
 
@@ -14,11 +28,11 @@ tools have to be boring before anything new is started.
 - [x] HTTP API — `/api/run`, status, tools, runs, confirmations, audit tail, token auth
 - [x] CLI — `start`, `doctor`, `tools`, `config`, `run`, `version`
 - [x] JSONL audit log with secret redaction
-- [x] 203 offline tests, including a full end-to-end run over live HTTP
+- [x] 252 offline tests, including a full end-to-end run over live HTTP
 
 ## Not started, ordered by how much they matter
 
-### 0.2 — make the MVP boring
+### 0.3 — make the MVP boring
 
 - [ ] More providers implemented natively (Anthropic, Gemini native, Ollama native)
 - [ ] Streaming responses so long runs report progress
@@ -26,8 +40,11 @@ tools have to be boring before anything new is started.
 - [ ] Better terminal ergonomics: background commands, `cwd` per session
 - [ ] Structured diffs for filesystem writes instead of whole-file rewrites
 - [ ] `agentlite doctor --fix` (create the workspace, install hints)
+- [ ] Optional seccomp / landed-mode execution for `terminal.run`
+- [ ] Per-token rate limiting on the HTTP API
+- [ ] Pin resolved IPs for browser navigation (closes the DNS-rebinding window)
 
-### 0.3 — sessions and ergonomics
+### 0.4 — sessions and ergonomics
 
 - [ ] Persistent agent sessions (resume a conversation later)
 - [ ] Token/cost accounting per run

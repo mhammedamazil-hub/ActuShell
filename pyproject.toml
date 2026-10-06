@@ -1,21 +1,22 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+# setuptools>=77 is needed for PEP 639 license metadata (the SPDX string).
+requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentlite"
-version = "0.1.0"
+version = "0.2.0"
 description = "A lightweight, self-hosted runtime that gives AI models controlled access to real computers."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "AgentLite contributors" }]
 keywords = ["agent", "llm", "tools", "computer-use", "automation", "runtime"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -42,6 +43,8 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/mhammedamazil-hub/AgentLite"
+Changelog = "https://github.com/mhammedamazil-hub/AgentLite/blob/main/CHANGELOG.md"
+Security = "https://github.com/mhammedamazil-hub/AgentLite/blob/main/docs/SECURITY.md"
 Repository = "https://github.com/mhammedamazil-hub/AgentLite"
 Issues = "https://github.com/mhammedamazil-hub/AgentLite/issues"
 

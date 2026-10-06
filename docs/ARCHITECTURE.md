@@ -69,9 +69,10 @@ Rules are read from the config on every call (regexes are memoised), so a config
 reload is just a new engine. Rule sets exist per family:
 
 * **terminal** — deny regexes, optional allow-list mode, confirm regexes, cwd
-  containment.
+  containment (`realpath`-resolved).
 * **filesystem** — allowed roots, denied globs, hidden files, symlinks, read-only.
-* **browser** — scheme, domain allow/deny lists, confirmation threshold by risk.
+* **browser** — scheme, domain allow/deny lists, confirmation threshold by risk,
+  and an address check on every host the URL resolves to (SSRF guard).
 
 A new tool picks a family by setting `family` on its `PermissionRequest`, so it
 inherits the matching rule set without any new code in the engine.
@@ -82,6 +83,23 @@ The single choke point. It also owns the boring-but-important behaviour: unknown
 tool, disabled tool, missing argument, tool exception, timeout — each becomes a
 `ToolResult` the model can read and adapt to, instead of an exception that kills
 the run.
+
+### Where the security checks actually happen
+
+The permission engine decides *before* an action. The checks that cannot be done
+beforehand happen *inside* the tools, right before the syscall that matters:
+
+| Where | Check | Why there |
+|---|---|---|
+| `permissions.check_url` | scheme, domain policy, resolved addresses | before navigation |
+| `BrowserSession` + tools | re-validate the URL after every navigation | a redirect can change the target |
+| Playwright route handler | refuse forbidden sub-resource requests | images/fetches count too |
+| `filesystem._open_verified` | `lstat` type gate, then `O_NOFOLLOW`, then re-check inode + containment | closes the check-then-open race and refuses FIFOs/devices |
+| `terminal.run` | `realpath` the cwd, apply rlimits, read output incrementally | a symlinked cwd escapes; a chatty command must not exhaust RAM |
+| `models.to_model_payload` | cap the serialised result | an oversized result must not break the provider call |
+
+The rule is: never trust a path, a URL or a process that was validated in a
+previous step. Re-check at the point of use.
 
 ### `core/confirmation.py`
 
@@ -125,6 +143,10 @@ in-memory store with a 30 minute TTL.
 * One process, no background workers, no queue.
 * The agent loop is synchronous; the API hands it to a thread pool so the event
   loop keeps serving `/health`.
+* `server.max_concurrent_runs` (default 4) bounds how many runs execute at once;
+  extra callers get HTTP 429 rather than queueing behind a long run.
+* All Playwright calls are funnelled through one dedicated thread
+  (`agentlite-browser-…`), because the sync Playwright API is not thread-safe.
 * Idle memory: ~56 MB. Chromium, when used, dominates (a few hundred MB while a
   page is open) and is closed with the process.
 * The browser is started lazily on the first browser call, not at boot.

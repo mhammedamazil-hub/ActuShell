@@ -67,6 +67,11 @@ permissions:
       - ".*PASSWORD.*"
     env_allowlist: []
     max_output_bytes: 32768
+    # Optional per-command ceilings: 0 means "no limit".
+    # max_memory_mb: 512
+    # max_cpu_seconds: 60
+    # max_file_size_mb: 256
+    # max_processes: 128
 
   filesystem:
     enabled: true
@@ -94,6 +99,7 @@ permissions:
     max_page_chars: 20000
     viewport_width: 1280
     viewport_height: 800
+    allow_private_networks: false # true = let the agent reach localhost/RFC1918
     # user_agent: "AgentLite/0.1"
 
 security:

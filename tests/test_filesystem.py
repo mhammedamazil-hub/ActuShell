@@ -91,15 +91,45 @@ def test_symlink_escape_is_denied(fs, config, tmp_path):
     assert "symlink" in result.reason
 
 
-def test_symlinks_can_be_allowed(fs, config, tmp_path):
-    secret = tmp_path / "outside.txt"
-    secret.write_text("allowed by config", encoding="utf-8")
+def test_symlinks_inside_the_workspace_can_be_allowed(fs, config):
+    """follow_symlinks=true means 'follow links inside the workspace', not 'escape it'."""
+    (config.workspace_root / "real.txt").write_text("inside the workspace", encoding="utf-8")
     link = config.workspace_root / "link.txt"
-    link.symlink_to(secret)
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    link.symlink_to(config.workspace_root / "real.txt")
     config.permissions.filesystem.follow_symlinks = True
     result = fs("filesystem.read", path="link.txt")
-    assert result.ok is True
-    assert result.output == "allowed by config"
+    assert result.ok is True, result.error
+    assert result.output == "inside the workspace"
+
+
+def test_following_symlinks_cannot_escape_the_workspace(fs, config, tmp_path):
+    """The critical case: an allowed symlink must still resolve inside the roots."""
+    secret = tmp_path / "outside.txt"
+    secret.write_text("top secret", encoding="utf-8")
+    link = config.workspace_root / "escape.txt"
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    link.symlink_to(secret)
+    config.permissions.filesystem.follow_symlinks = True
+    result = fs("filesystem.read", path="escape.txt")
+    assert result.ok is False
+    assert "outside the allowed paths" in result.error
+
+
+def test_symlinked_directory_cannot_be_used_to_escape(fs, config, tmp_path):
+    outside = tmp_path / "outside_dir"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("nope", encoding="utf-8")
+    link = config.workspace_root / "door"
+    if link.exists() or link.is_symlink():
+        link.unlink()
+    link.symlink_to(outside)
+    config.permissions.filesystem.follow_symlinks = True
+    assert fs("filesystem.read", path="door/secret.txt").ok is False
+    assert fs("filesystem.list", path="door").ok is False
+    assert fs("filesystem.write", path="door/new.txt", content="x").ok is False
 
 
 def test_read_only_blocks_writes(fs, config):
@@ -186,3 +216,24 @@ def test_list_limit(fs, config):
     assert result.ok is True
     assert result.meta["count"] == 3
     assert result.meta["truncated"] is True
+
+
+def test_named_pipe_is_refused_instead_of_hanging(fs, config):
+    """A FIFO in the workspace would block the read forever - refuse it."""
+    import os as _os
+
+    fifo = config.workspace_root / "pipe"
+    if fifo.exists():
+        fifo.unlink()
+    _os.mkfifo(fifo)
+    try:
+        result = fs("filesystem.read", path="pipe")
+        assert result.ok is False
+        assert "not a regular file" in result.error
+    finally:
+        fifo.unlink()
+
+
+def test_devices_and_sockets_are_refused(fs, config):
+    result = fs("filesystem.read", path="/dev/null")
+    assert result.ok is False

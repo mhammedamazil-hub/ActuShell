@@ -29,6 +29,22 @@ def utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+#: Tool metadata worth sending back to the model, in payload order.
+_PAYLOAD_META_KEYS = ("exit_code", "cwd", "path", "url", "stdout", "stderr", "entries", "timed_out")
+
+
+def _cap_entries(key: str, value: Any, entries_cap: int, budget: int) -> Any:
+    """Keep metadata small enough to be worth its tokens."""
+    if isinstance(value, str):
+        return truncate(value, budget)
+    if isinstance(value, list):
+        max_items = entries_cap if key == "entries" else min(entries_cap, 20)
+        if len(value) > max_items:
+            return value[:max_items] + [f"...{len(value) - max_items} more"]
+        return value
+    return value
+
+
 def truncate(text: str, limit: int) -> str:
     """Truncate text in the middle, keeping head and tail (tails carry errors)."""
     if text is None:
@@ -117,20 +133,54 @@ class ToolResult:
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_model_payload(self, max_chars: int = 16000) -> str:
-        """Compact JSON payload handed back to the model as the tool message."""
-        payload: Dict[str, Any] = {"ok": self.ok, "tool": self.name}
-        if self.error:
-            payload["error"] = self.error
-        if self.output:
-            payload["output"] = truncate(self.output, max_chars)
-        for key in ("exit_code", "cwd", "path", "url", "stdout", "stderr", "entries", "timed_out"):
-            if key in self.meta:
-                payload[key] = self.meta[key]
-        if not self.ok and self.decision != "allow":
-            payload["permission"] = self.decision
-            if self.reason:
-                payload["reason"] = self.reason
-        return json.dumps(payload, ensure_ascii=False)
+        """Compact JSON payload handed back to the model as the tool message.
+
+        The cap applies to the *serialised* payload, not just to ``output``:
+        a directory listing of 500 entries is metadata, and metadata counts
+        against the context window too. Whatever happens the return value is
+        valid JSON -- a payload cut mid-string would break the provider call.
+        """
+        limit = max(500, int(max_chars or 16000))
+
+        def build(entries_cap: int) -> Dict[str, Any]:
+            fields: Dict[str, Any] = {"ok": self.ok, "tool": self.name}
+            if self.error:
+                fields["error"] = truncate(self.error, 1000 if entries_cap else 500)
+            if entries_cap:
+                for key in _PAYLOAD_META_KEYS:
+                    if key in self.meta:
+                        fields[key] = _cap_entries(key, self.meta[key], entries_cap, 4000)
+            if not self.ok and self.decision != "allow":
+                fields["permission"] = self.decision
+                if self.reason:
+                    fields["reason"] = truncate(self.reason, 500)
+            return fields
+
+        def serialise(output: str, fields: Dict[str, Any]) -> str:
+            return json.dumps({**fields, "output": output}, ensure_ascii=False)
+
+        best = build(50)
+        text = serialise(truncate(self.output, limit), best)
+        if len(text) <= limit:
+            return text
+
+        # Trim the metadata first, then the output: a run summary without the
+        # full file list is still useful, a file list without the summary is not.
+        for entries_cap in (50, 20, 5, 0):
+            fields = build(entries_cap)
+            available = limit - len(serialise("", fields))
+            if available >= 64:
+                return serialise(truncate(self.output, available), fields)
+
+        # Nothing fits; say so in a form the model can still reason about.
+        return json.dumps(
+            {
+                "ok": self.ok,
+                "tool": self.name,
+                "output": f"...omitted: the result is larger than the {limit} character limit",
+            },
+            ensure_ascii=False,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

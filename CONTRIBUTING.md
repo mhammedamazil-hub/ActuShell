@@ -12,7 +12,12 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[browser,dev]"
 playwright install chromium      # optional, for the browser tools
 pytest
+ruff check agentlite tests
+ruff format --check agentlite tests
 ```
+
+The suite is 252 tests and runs offline in about 17 seconds. If it needs a key,
+a network call or a browser binary, it does not belong in it.
 
 ## The rules
 
@@ -20,10 +25,15 @@ pytest
    The suite must stay offline: no API keys, no network calls, no browser binary.
    (The one exception is `tests/test_e2e.py`, which talks to a local server started
    by the test itself.)
-2. **Lint clean.** `ruff check .` (config in `pyproject.toml`).
+2. **Lint and format clean.** `ruff check agentlite tests` and
+   `ruff format --check agentlite tests` (config in `pyproject.toml`).
 3. **Security changes are not casual.** Anything touching `core/permissions.py`,
-   `core/executor.py`, `tools/terminal.py` or `tools/filesystem.py` needs a test
-   that proves the restriction works — including one that tries to break it.
+   `core/executor.py`, `tools/terminal.py`, `tools/filesystem.py` or
+   `tools/browser.py` needs a test in `tests/test_security.py` that proves the
+   restriction works — including one that tries to break it. Before adding a
+   check, ask where it has to live: the permission engine runs *before* an
+   action, but a path, a URL or a process can change between the check and the
+   use, so anything that can be swapped must be re-checked at the point of use.
 4. **No placeholder implementations.** If a feature is not finished, do not
    describe it as finished in the README or the docstring.
 5. **Keep it light.** A new dependency is a big deal on a 4 GB machine. Prefer the
@@ -70,6 +80,7 @@ to `.github/workflows/ci.yml` when you set the repository up.
 agentlite doctor                 # is my setup sane?
 agentlite tools                  # what can the agent do?
 pytest -k terminal               # one area
+pytest tests/test_security.py -v # the security boundaries
 pytest tests/test_e2e.py -v      # the full loop over real HTTP
 python examples/fake_llm_server.py --port 8100    # keyless demo backend
 ```

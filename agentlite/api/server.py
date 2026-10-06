@@ -18,6 +18,7 @@ computer control to the network without one.
 from __future__ import annotations
 
 import hmac
+import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -29,9 +30,11 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..core.agent import Agent, AgentRun
-from ..core.config import Config, validate_config
+from ..core.config import Config, security_warnings, validate_config
 from ..core.models import RunStatus
 from ..core.registry import ToolRegistry
+
+logger = logging.getLogger("agentlite.api")
 
 START_TIME = time.time()
 
@@ -91,6 +94,38 @@ class Runtime:
         self.registry = self.agent.registry
         self.store = RunStore()
         self.warnings = validate_config(config)
+        self.security_warnings = security_warnings(config)
+        self.active_runs = 0
+
+    # -- concurrency ------------------------------------------------------ #
+    # Agent runs are synchronous and can spawn processes; on a small machine a
+    # handful of concurrent runs is plenty. Extra callers get HTTP 429 instead
+    # of queueing forever.
+
+    def acquire_slot(self) -> bool:
+        limit = max(1, int(self.config.server.max_concurrent_runs or 1))
+        if self.active_runs >= limit:
+            return False
+        self.active_runs += 1
+        return True
+
+    def release_slot(self) -> None:
+        self.active_runs = max(0, self.active_runs - 1)
+
+    # -- lifecycle -------------------------------------------------------- #
+
+    def close(self) -> None:
+        """Release everything: browser process, HTTP client, tool resources."""
+        try:
+            self.registry.close()
+        except Exception as exc:  # noqa: BLE001 - teardown is best effort
+            logger.warning("error closing the tool registry: %s", exc)
+        closer = getattr(self.agent.provider, "close", None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("error closing the provider: %s", exc)
 
     def status(self) -> dict[str, Any]:
         provider = self.agent.provider.describe()
@@ -109,6 +144,12 @@ class Runtime:
                 }
                 for entry in self.registry
             },
+            "limits": {
+                "max_concurrent_runs": self.config.server.max_concurrent_runs,
+                "active_runs": self.active_runs,
+                "max_steps": self.config.security.max_steps,
+                "max_task_chars": self.config.server.max_task_chars,
+            },
             "security": {
                 "confirmation_mode": self.config.security.confirmation_mode,
                 "max_steps": self.config.security.max_steps,
@@ -118,6 +159,7 @@ class Runtime:
                 "host": self.config.server.host,
             },
             "warnings": self.warnings,
+            "security_warnings": self.security_warnings,
         }
 
 
@@ -166,8 +208,10 @@ def auth_dependency(request: Request) -> None:
 async def _lifespan(app: FastAPI):
     runtime: Runtime = app.state.agentlite
     runtime.config.ensure_directories()
-    yield
-    runtime.registry.close()
+    try:
+        yield
+    finally:
+        runtime.close()
 
 
 def create_app(
@@ -229,11 +273,32 @@ def create_app(
         task = body.task.strip()
         if not task:
             raise HTTPException(status_code=400, detail="task must not be empty")
-        run = runtime.agent.create_run(task, max_steps=body.max_steps)
-        result = await run_in_threadpool(run.resume)
+        max_chars = max(1, int(runtime.config.server.max_task_chars))
+        if len(task) > max_chars:
+            raise HTTPException(
+                status_code=413,
+                detail=f"task is too long ({len(task)} characters, limit is {max_chars})",
+            )
+        if not runtime.acquire_slot():
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"{runtime.config.server.max_concurrent_runs} run(s) already in progress "
+                    "- retry shortly"
+                ),
+                headers={"Retry-After": "5"},
+            )
+        try:
+            run = runtime.agent.create_run(task, max_steps=body.max_steps)
+            result = await run_in_threadpool(run.resume)
+        except Exception:  # noqa: BLE001 - never leak the slot on failure
+            runtime.release_slot()
+            raise
         if result.status is RunStatus.NEEDS_CONFIRMATION:
             runtime.store.put(run)
+            runtime.release_slot()
             return JSONResponse(status_code=202, content=result.to_dict())
+        runtime.release_slot()
         return result.to_dict()
 
     @app.get("/api/runs/{run_id}", tags=["agent"], dependencies=auth)
@@ -257,7 +322,16 @@ def create_app(
         if run.pending is None:
             raise HTTPException(status_code=409, detail="run is not waiting for confirmation")
         approved = body.decision == "allow"
-        result = await run_in_threadpool(run.resume, approved)
+        if not runtime.acquire_slot():
+            raise HTTPException(
+                status_code=429,
+                detail="another run is already in progress - retry shortly",
+                headers={"Retry-After": "5"},
+            )
+        try:
+            result = await run_in_threadpool(run.resume, approved)
+        finally:
+            runtime.release_slot()
         if result.status is RunStatus.NEEDS_CONFIRMATION:
             runtime.store.put(run)
             return JSONResponse(status_code=202, content=result.to_dict())
