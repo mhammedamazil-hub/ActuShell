@@ -37,6 +37,9 @@ dependencies = [
 browser = ["playwright>=1.40.0"]
 dev = [
     "pytest>=7.0",
+    # The suite deliberately runs commands that hang (FIFOs, timeouts);
+    # without a per-test timeout one regression can stall CI forever.
+    "pytest-timeout>=2.0",
     "ruff>=0.1.0",
     "build>=1.0",
 ]
@@ -60,6 +63,7 @@ agentlite = ["config/*.yaml", "py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+timeout = 120
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
