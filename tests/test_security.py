@@ -464,6 +464,22 @@ def test_redactor_keeps_ordinary_text():
     assert "verysecretvalue123" not in redactor.scrub("token verysecretvalue123 here")
 
 
+def test_audit_log_rotates_instead_of_growing_forever(tmp_path):
+    """An audit log must not be the thing that fills the disk."""
+    path = tmp_path / "audit.jsonl"
+    logger = AuditLogger(path=path, enabled=True, max_bytes=4096, backups=2)
+    for index in range(200):
+        logger.log("tool_call", tool="terminal.run", arguments=f"command number {index}")
+    assert path.stat().st_size <= 8192, "the active log was never rotated"
+    assert (tmp_path / "audit.jsonl.1").exists()
+    assert len(logger.tail(500)) < 200, "old entries were rotated away"
+    # Rotation must keep working once the backups are full.
+    for index in range(200):
+        logger.log("tool_call", tool="terminal.run", arguments=f"more commands {index}")
+    assert path.exists()
+    assert (tmp_path / "audit.jsonl.2").exists()
+
+
 def test_audit_log_disables_itself_instead_of_crashing_the_run(tmp_path):
     blocker = tmp_path / "blocked"
     blocker.write_text("I am a file, not a directory", encoding="utf-8")

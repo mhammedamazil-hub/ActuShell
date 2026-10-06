@@ -319,6 +319,11 @@ class LoggingConfig:
     dir: str = "~/.agentlite/logs"
     level: str = "INFO"
     file: str = "agentlite.jsonl"
+    #: Rotate the audit log once it passes this many megabytes. On a small
+    #: machine an unbounded log is a disk-filling bug waiting to happen.
+    max_file_mb: int = 25
+    #: Rotated files kept (``agentlite.jsonl.1``, ``.2``, ...).
+    backups: int = 2
 
     @classmethod
     def from_mapping(cls, data):

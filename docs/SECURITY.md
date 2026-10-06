@@ -232,7 +232,7 @@ permission engine, the terminal, the filesystem tools or the browser session,
 this is the command that should still pass:
 
 ```bash
-pytest tests/test_security.py -v     # 50 tests
+pytest tests/test_security.py -v     # 51 tests
 pytest                               # the whole suite
 ```
 

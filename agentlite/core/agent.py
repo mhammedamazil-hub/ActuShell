@@ -341,6 +341,11 @@ def _default_registry(config: Config) -> ToolRegistry:
 def _default_audit(config: Config) -> AuditLogger:
     from .audit import build_audit_logger
 
+    logging_section = getattr(config, "logging", None)
     return build_audit_logger(
-        config.log_path, config.security.audit_log, config.security.redact_secrets
+        config.log_path,
+        config.security.audit_log,
+        config.security.redact_secrets,
+        max_bytes=int(getattr(logging_section, "max_file_mb", 0) or 0) * 1024 * 1024,
+        backups=int(getattr(logging_section, "backups", 2) or 0),
     )

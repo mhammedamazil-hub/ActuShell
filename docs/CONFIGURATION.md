@@ -139,6 +139,8 @@ Defaults ask for confirmation for: `rm`, `rmdir`, `mv`, `cp -r`, `chmod`, `chown
 | `dir` | `~/.agentlite/logs` | Log directory (`~` is expanded). |
 | `level` | `INFO` | Python log level for the `agentlite` loggers. |
 | `file` | `agentlite.jsonl` | Audit log file name. |
+| `max_file_mb` | `25` | Rotate the audit log at this size (`agentlite.jsonl.1`, `.2`). |
+| `backups` | `2` | Rotated files kept. |
 
 ---
 

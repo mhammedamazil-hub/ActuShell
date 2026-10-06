@@ -119,3 +119,5 @@ logging:
   dir: ~/.agentlite/logs
   level: INFO
   file: agentlite.jsonl
+  max_file_mb: 25 # rotate the audit log at this size
+  backups: 2

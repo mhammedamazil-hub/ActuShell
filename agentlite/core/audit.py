@@ -64,12 +64,16 @@ class AuditLogger:
         path: Optional[Path] = None,
         enabled: bool = True,
         redactor: Optional[Redactor] = None,
+        max_bytes: int = 0,
+        backups: int = 2,
     ):
         self.path = Path(path) if path else None
         self.enabled = enabled and self.path is not None
         # Redaction is on by default: credential *shapes* are always scrubbed,
         # even when nobody told us which secrets to look for.
         self.redactor = redactor or Redactor(enabled=True)
+        self.max_bytes = int(max_bytes or 0)
+        self.backups = max(0, int(backups))
         self._lock = threading.Lock()
         if self.enabled and self.path is not None:
             try:
@@ -90,10 +94,35 @@ class AuditLogger:
         line = json.dumps(record, ensure_ascii=False, default=str)
         with self._lock:
             try:
+                self._rotate_if_needed()
                 with open(self.path, "a", encoding="utf-8") as handle:
                     handle.write(line + "\n")
             except OSError:
                 # Logging must never break execution.
+                pass
+
+    def _rotate_if_needed(self) -> None:
+        """Keep the log file bounded: an audit log is not allowed to fill a disk."""
+        if self.max_bytes <= 0 or self.path is None:
+            return
+        try:
+            if not self.path.exists() or self.path.stat().st_size < self.max_bytes:
+                return
+        except OSError:  # pragma: no cover - raced with a deletion
+            return
+        for index in range(self.backups, 0, -1):
+            source = (
+                self.path
+                if index == 1
+                else self.path.with_suffix(f"{self.path.suffix}.{index - 1}")
+            )
+            target = self.path.with_suffix(f"{self.path.suffix}.{index}")
+            try:
+                if source.exists():
+                    if target.exists():
+                        target.unlink()
+                    source.replace(target)
+            except OSError:  # pragma: no cover - best effort
                 pass
 
     def tail(self, limit: int = 100) -> List[Dict[str, Any]]:
@@ -113,8 +142,20 @@ class AuditLogger:
         return records
 
 
-def build_audit_logger(path: Optional[Path], enabled: bool, redact: bool) -> AuditLogger:
+def build_audit_logger(
+    path: Optional[Path],
+    enabled: bool,
+    redact: bool,
+    max_bytes: int = 0,
+    backups: int = 2,
+) -> AuditLogger:
     from .config import collect_secret_values
 
     redactor = Redactor(collect_secret_values() if redact else [], enabled=redact)
-    return AuditLogger(path=path, enabled=enabled, redactor=redactor)
+    return AuditLogger(
+        path=path,
+        enabled=enabled,
+        redactor=redactor,
+        max_bytes=max_bytes,
+        backups=backups,
+    )

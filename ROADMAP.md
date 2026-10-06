@@ -28,7 +28,7 @@ three MVP tools have to be boring before anything new is started.
 - [x] HTTP API — `/api/run`, status, tools, runs, confirmations, audit tail, token auth
 - [x] CLI — `start`, `doctor`, `tools`, `config`, `run`, `version`
 - [x] JSONL audit log with secret redaction
-- [x] 259 offline tests, including a full end-to-end run over live HTTP
+- [x] 260 offline tests, including a full end-to-end run over live HTTP
 
 ## Not started, ordered by how much they matter
 

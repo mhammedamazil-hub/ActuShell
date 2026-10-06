@@ -181,3 +181,6 @@ logging:
   dir: ~/.agentlite/logs
   level: INFO
   file: agentlite.jsonl
+  # Rotate the audit log so a long-lived runtime cannot fill the disk.
+  max_file_mb: 25
+  backups: 2

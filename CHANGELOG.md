@@ -51,8 +51,10 @@ concrete way to break or abuse the 0.1.0 behaviour.
 - **Non-interactive runs refuse confirmations explicitly.** `agentlite run` in a
   pipe, cron job or CI now says so, instead of printing a prompt nobody can
   answer.
-- **The audit log is created with mode `0600`.**
-- 56 new tests, most of them in `tests/test_security.py`.
+- **The audit log is created with mode `0600` and rotates** at
+  `logging.max_file_mb` (default 25 MB, 2 backups), so a long-lived runtime
+  cannot fill the disk with it.
+- 57 new tests, most of them in `tests/test_security.py`.
 
 ### Fixed
 
