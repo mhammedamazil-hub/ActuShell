@@ -19,6 +19,7 @@ import fnmatch
 import ipaddress
 import re
 import socket
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -322,6 +323,9 @@ def is_inside(path: Path, roots: Sequence[Path]) -> bool:
 # SSRF helpers
 # --------------------------------------------------------------------------- #
 
+#: How long a hostname lookup may take before we refuse to navigate.
+DNS_TIMEOUT_SECONDS = 3.0
+
 #: Hosts that always mean "this machine", whatever they resolve to.
 LOCAL_HOST_NAMES = {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
 
@@ -376,16 +380,13 @@ def _check_host_addresses(host: str) -> Decision:
             rule="browser.allow_private_networks",
         )
 
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except (socket.gaierror, UnicodeError, OSError):
-        # Fail closed: a host we cannot resolve cannot be proven public.
-        return Decision(
-            Effect.DENY, f"could not resolve {host!r} (refusing to navigate)", rule="browser.dns"
-        )
+    addresses, error = _resolve_with_timeout(host)
+    if addresses is None:
+        # Fail closed: a host we cannot resolve cannot be proven public, and a
+        # lookup that never returns must not stall the run either.
+        return Decision(Effect.DENY, error or f"could not resolve {host!r}", rule="browser.dns")
 
-    for info in infos:
-        address = info[4][0]
+    for address in addresses:
         try:
             parsed = ipaddress.ip_address(address)
         except ValueError:  # pragma: no cover - exotic sockaddr
@@ -398,6 +399,31 @@ def _check_host_addresses(host: str) -> Decision:
                 rule="browser.allow_private_networks",
             )
     return Decision(Effect.ALLOW, "url allowed", rule="browser.default")
+
+
+def _resolve_with_timeout(host: str, timeout: float = DNS_TIMEOUT_SECONDS):
+    """Resolve ``host`` to IP strings, giving up after ``timeout`` seconds.
+
+    ``socket.getaddrinfo`` has no timeout of its own, so a slow or hostile DNS
+    server would otherwise stall the whole run. The lookup happens on a daemon
+    thread; if it does not answer in time we fail closed.
+    """
+    result: Dict[str, Any] = {}
+
+    def lookup() -> None:
+        try:
+            result["addresses"] = [info[4][0] for info in socket.getaddrinfo(host, None)]
+        except BaseException as exc:  # noqa: BLE001 - reported as a refusal
+            result["error"] = exc
+
+    worker = threading.Thread(target=lookup, name="agentlite-dns", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if "addresses" in result:
+        return result["addresses"], None
+    if "error" in result:
+        return None, f"could not resolve {host!r} (refusing to navigate)"
+    return None, f"DNS lookup for {host!r} timed out after {timeout}s (refusing to navigate)"
 
 
 def _domain_matches(host: str, domain: str) -> bool:

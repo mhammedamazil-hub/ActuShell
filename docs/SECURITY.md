@@ -75,12 +75,13 @@ resolved and every address it maps to is checked:
 | Target | Verdict |
 |---|---|
 | `http://localhost:8080/admin`, `http://127.0.0.1:22` | denied (loopback) |
-| `http://2130706433/`, `http://0x7f000001/` | denied (loopback in decimal / hex) |
-| `http://[::1]/` | denied (IPv6 loopback) |
+| `http://2130706433/`, `http://0x7f000001/`, `http://127.1/` | denied (loopback in decimal / hex / short form) |
+| `http://example.com@127.0.0.1/` | denied (userinfo hides the real host) |
+| `http://[::1]/`, `http://[::ffff:127.0.0.1]/` | denied (IPv6 loopback, IPv4-mapped) |
 | `http://169.254.169.254/latest/meta-data/` | denied (cloud metadata) |
 | `http://10.0.0.5/`, `http://192.168.1.1/`, `http://172.16.0.1/` | denied (RFC1918) |
 | `file:///etc/passwd`, `gopher://…` | denied (scheme) |
-| a host with no DNS record | denied (fail-closed) |
+| a host with no DNS record, or a lookup that does not answer in 3 s | denied (fail-closed) |
 | `https://example.com/page` | allowed |
 
 **Redirects must not be able to smuggle it there anyway.** The final URL is
@@ -231,7 +232,7 @@ permission engine, the terminal, the filesystem tools or the browser session,
 this is the command that should still pass:
 
 ```bash
-pytest tests/test_security.py -v     # 43 tests
+pytest tests/test_security.py -v     # 50 tests
 pytest                               # the whole suite
 ```
 
@@ -256,3 +257,11 @@ If AgentLite is doing anything you would be unhappy to lose:
 8. Read the audit log: `tail -f ~/.agentlite/logs/agentlite.jsonl`.
 9. Consider a container or VM with a disposable workspace for anything
    experimental — see "Isolation (optional)" above.
+
+Two smaller notes, since they surprise people:
+
+* The audit log is created with mode `0600`, but it is a plaintext file on your
+  disk: treat it like any other log of what you did.
+* `agentlite run` without a terminal (a pipe, cron, CI) refuses anything that
+  would need confirmation, and says so. Use `--yes` only when you have already
+  read the command list.

@@ -283,15 +283,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     config.ensure_directories()
 
     from ..core.agent import Agent
-    from ..core.confirmation import AutoAllowHandler, CliConfirmationHandler
+    from ..core.confirmation import AutoAllowHandler, CliConfirmationHandler, DenyHandler
 
     if args.yes:
         config.security.confirmation_mode = "allow"
         handler: Any = AutoAllowHandler()
     elif sys.stdin.isatty():
         handler = CliConfirmationHandler()
+    elif config.security.confirmation_mode == "prompt":
+        # Nobody can answer a prompt in a pipe or a cron job: refuse instead of
+        # parking a run that the CLI has no way to resume.
+        _print("note: not a terminal - actions needing confirmation will be refused.")
+        handler = DenyHandler()
     else:
-        handler = None  # -> default mode handler (deny when non-interactive)
+        handler = None  # -> the handler for allow / deny mode
 
     agent = Agent.from_config(config, confirmation_handler=handler)
     _require_credentials(config)

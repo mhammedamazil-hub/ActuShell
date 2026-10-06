@@ -7,6 +7,7 @@ JSONL file. This is what makes an AgentLite session reviewable after the fact.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 from collections.abc import Iterable
@@ -73,6 +74,10 @@ class AuditLogger:
         if self.enabled and self.path is not None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
+                # The log records commands, paths and output previews: it is
+                # created 0600, and an existing file is left as the user has it.
+                if not self.path.exists():
+                    os.close(os.open(self.path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600))
             except OSError:
                 self.enabled = False
 

@@ -16,7 +16,7 @@ ruff check agentlite tests
 ruff format --check agentlite tests
 ```
 
-The suite is 252 tests and runs offline in about 17 seconds. If it needs a key,
+The suite is 259 tests and runs offline in about 19 seconds. If it needs a key,
 a network call or a browser binary, it does not belong in it.
 
 ## The rules

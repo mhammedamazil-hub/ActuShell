@@ -67,7 +67,7 @@ What is implemented and tested today:
 | Provider abstraction | ✅ one real provider: OpenAI-compatible (+ scripted mock for tests) |
 | HTTP API | ✅ `/api/run`, `/api/status`, `/api/tools`, confirmations, audit tail |
 | CLI | ✅ `start`, `doctor`, `tools`, `config`, `run`, `version` |
-| Tests | ✅ 252 tests, all offline (43 of them security boundaries) |
+| Tests | ✅ 259 tests, all offline (50 of them security boundaries) |
 
 v0.2.0 is a hardening release: it closes a terminal memory-exhaustion hole, an
 SSRF hole in the browser, a filesystem symlink/FIFO escape and several smaller
@@ -514,7 +514,7 @@ Design notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Testing
 
 ```bash
-pytest                            # 252 tests, offline, ~17 s
+pytest                            # 259 tests, offline, ~19 s
 pytest tests/test_security.py -v  # the security boundaries only
 ruff check agentlite tests        # lint
 ```

@@ -180,6 +180,13 @@ class FilesystemToolBase(Tool):
             raise ToolError(f"path resolves outside the allowed paths: {real}")
 
 
+def _write_all(fd: int, data: bytes, path: Path) -> None:
+    """Write every byte: ``os.write`` is allowed to write less than asked."""
+    written = 0
+    while written < len(data):
+        written += os.write(fd, memoryview(data)[written:])
+
+
 class FilesystemListTool(FilesystemToolBase):
     name = "filesystem.list"
     action = "list"
@@ -339,7 +346,7 @@ class FilesystemWriteTool(FilesystemToolBase):
         flags |= os.O_APPEND if arguments.get("append") else os.O_TRUNC
         fd = self._open_verified(path, context, flags)
         try:
-            os.write(fd, encoded)
+            _write_all(fd, encoded, path)
         except OSError as exc:
             raise ToolError(f"cannot write {path}: {exc.strerror or exc}") from exc
         finally:

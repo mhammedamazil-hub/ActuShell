@@ -262,6 +262,12 @@ def engine(config_factory) -> PermissionEngine:
         "http://metadata.google.internal/",
         "file:///etc/passwd",
         "gopher://example.com/",
+        "http://example.com@127.0.0.1/",  # userinfo hides the real host
+        "http://example.com%40127.0.0.1/",
+        "http://127.1/",  # inet_aton short form
+        "http://[::ffff:127.0.0.1]/",  # IPv4-mapped IPv6
+        "http://LOCALHOST/",
+        "http://localhost./",
     ],
 )
 def test_private_and_local_urls_are_refused(engine, url):
@@ -271,6 +277,19 @@ def test_private_and_local_urls_are_refused(engine, url):
 
 def test_public_url_is_allowed(engine):
     assert engine.check_url("https://example.com/page").effect is Effect.ALLOW
+
+
+def test_a_slow_dns_lookup_is_refused_instead_of_stalling(engine, monkeypatch):
+    """getaddrinfo has no timeout; a hostile resolver must not hang the run."""
+    from agentlite.core import permissions
+
+    monkeypatch.setattr(
+        permissions.socket, "getaddrinfo", lambda *a, **k: __import__("time").sleep(30)
+    )
+    monkeypatch.setattr(permissions, "DNS_TIMEOUT_SECONDS", 0.2)
+    decision = engine.check_url("http://slow.example.com/")
+    assert decision.effect is Effect.DENY
+    assert "timed out" in decision.reason
 
 
 def test_private_networks_can_be_enabled_deliberately(config_factory, monkeypatch):

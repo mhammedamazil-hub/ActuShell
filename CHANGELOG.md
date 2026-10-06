@@ -30,13 +30,29 @@ concrete way to break or abuse the 0.1.0 behaviour.
 - **Credential-shape redaction in the audit log.** Keys that look like
   OpenAI/Groq/Slack/AWS/GitHub tokens, JWTs or `Bearer …` headers are scrubbed
   even when they only ever appeared in tool output.
+- **SSRF bypasses closed**: userinfo (`http://example.com@127.0.0.1/`),
+  IPv4-mapped IPv6 (`http://[::ffff:127.0.0.1]/`) and short-form addresses
+  (`http://127.1/`) are all refused.
+- **Bounded DNS lookups.** `socket.getaddrinfo` has no timeout, so a slow or
+  hostile resolver could stall a run for minutes; lookups now run on a thread
+  with a 3 s budget and fail closed.
+- **Bounded browser calls.** A wedged Playwright operation no longer hangs the
+  agent run: the wait is bounded, the session is marked stuck, and
+  `browser.close` recovers it.
 - **Config warnings.** `agentlite doctor` and `GET /api/status` report
   dangerous settings (`allow_shell`, `confirmation_mode: allow`,
   `allow_private_networks`, `allowed_paths: ["/"]`).
 - **Better CLI errors**: a missing API key now explains how to set it (or how
   to try AgentLite against `examples/fake_llm_server.py`), an unparseable
   config file names the file and the YAML error.
-- 48 new tests, most of them in `tests/test_security.py`.
+- **The run deadline is now checked between tool calls**, not only between
+  steps: one model response can request many calls, and each may run for its
+  timeout.
+- **Non-interactive runs refuse confirmations explicitly.** `agentlite run` in a
+  pipe, cron job or CI now says so, instead of printing a prompt nobody can
+  answer.
+- **The audit log is created with mode `0600`.**
+- 56 new tests, most of them in `tests/test_security.py`.
 
 ### Fixed
 
@@ -62,6 +78,8 @@ concrete way to break or abuse the 0.1.0 behaviour.
 - **Provider lifecycle**: the browser session, HTTP client and tool registry are
   closed on shutdown, and the `httpx` client uses connection limits and does
   not follow redirects.
+- **Partial writes.** `os.write` may write fewer bytes than asked; filesystem
+  writes now loop until everything is written.
 
 ### Changed (breaking)
 
