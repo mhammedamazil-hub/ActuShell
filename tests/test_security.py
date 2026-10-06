@@ -46,8 +46,13 @@ def call(agent, context, name, **arguments):
 # --------------------------------------------------------------------------- #
 
 
-def test_output_is_capped_without_buffering_it_all(runtime):
-    """A chatty command must not be able to exhaust the machine's memory."""
+def test_runaway_output_is_capped_and_the_run_survives(runtime):
+    """A command that prints far more than the cap must still return promptly.
+
+    (Memory use is what the incremental read buys: output is never buffered in
+    full. That part is verified by hand, not asserted here, because a peak-RSS
+    assertion in a shared test process is not reliable.)
+    """
     agent, config, context = runtime
     config.permissions.terminal.max_output_bytes = 4096
     command = "python3 -c \"import sys; sys.stdout.write('A' * (80 * 1024 * 1024))\""

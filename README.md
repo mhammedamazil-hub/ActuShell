@@ -379,8 +379,9 @@ run something, the permission system is the only guardrail. Read
 
 The permission engine is independent from the tools: a tool describes what it
 *wants* to do, the engine answers `allow` / `deny` / `confirm`, and only then does
-anything run. A tool cannot decide for itself, and a bug in a tool cannot escalate
-privileges.
+anything run. A tool cannot decide for itself. (A bug *inside* a tool is still a
+bug — it runs with your privileges — which is why the filesystem and browser tools
+re-check the path and the URL at the moment they are used, not only beforehand.)
 
 More detail, including what AgentLite does *not* protect against:
 [docs/SECURITY.md](docs/SECURITY.md).
@@ -514,9 +515,10 @@ Design notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Testing
 
 ```bash
-pytest                            # 260 tests, offline, ~19 s
-pytest tests/test_security.py -v  # the security boundaries only
-ruff check agentlite tests        # lint
+pytest                                  # 260 tests, offline, ~19 s
+pytest tests/test_security.py -v        # the security boundaries only
+ruff check agentlite tests              # lint
+ruff format --check agentlite tests     # formatting
 ```
 
 The suite covers the permission system, terminal execution and timeouts,
