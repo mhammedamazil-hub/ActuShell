@@ -29,6 +29,7 @@ three MVP tools have to be boring before anything new is started.
 - [x] CLI — `start`, `doctor`, `tools`, `config`, `run`, `version`
 - [x] JSONL audit log with secret redaction
 - [x] 292 offline tests, including a full end-to-end run over live HTTP
+- [x] Per-caller rate limiting on the HTTP API (60/min default; 429 + Retry-After)
 
 ## Not started, ordered by how much they matter
 
@@ -41,7 +42,6 @@ three MVP tools have to be boring before anything new is started.
 - [ ] Structured diffs for filesystem writes instead of whole-file rewrites
 - [ ] `agentlite doctor --fix` (create the workspace, install hints)
 - [ ] Optional seccomp / landed-mode execution for `terminal.run`
-- [ ] Per-token rate limiting on the HTTP API
 - [ ] Pin resolved IPs for browser navigation (closes the DNS-rebinding window)
 
 ### 0.4 — sessions and ergonomics

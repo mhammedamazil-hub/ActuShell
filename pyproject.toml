@@ -40,6 +40,7 @@ dev = [
     # The suite deliberately runs commands that hang (FIFOs, timeouts);
     # without a per-test timeout one regression can stall CI forever.
     "pytest-timeout>=2.0",
+    "coverage>=7.0",
     "ruff>=0.1.0",
     "build>=1.0",
 ]
