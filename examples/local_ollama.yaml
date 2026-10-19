@@ -1,0 +1,32 @@
+# Fully local: a model served by Ollama, no external API, no API key.
+#
+#   ollama serve
+#   ollama pull llama3.2
+#   agentlite run "summarise the files in the workspace" --config examples/local_ollama.yaml
+#
+# Any OpenAI-compatible server works the same way: LM Studio (localhost:1234),
+# vLLM (localhost:8000), llama.cpp's server, text-generation-webui, ...
+
+workspace: ./workspace
+
+provider:
+  name: ollama
+  model: llama3.2
+  base_url: http://localhost:11434/v1
+  api_key_env: OLLAMA_API_KEY # optional; Ollama ignores it
+  timeout: 180 # local models are slower than hosted ones
+
+permissions:
+  terminal:
+    enabled: true
+    require_confirmation: true
+  filesystem:
+    enabled: true
+    allowed_paths:
+      - ./workspace
+  browser:
+    enabled: false
+
+security:
+  confirmation_mode: prompt
+  max_steps: 15 # small models loop more; keep the budget tight

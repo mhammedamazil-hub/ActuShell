@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Testing / lint
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# AgentLite runtime data (the workspace is yours, not the project's)
+workspace/*
+!workspace/.gitkeep
+~/.agentlite/
+agentlite.local.yaml
+*.log
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

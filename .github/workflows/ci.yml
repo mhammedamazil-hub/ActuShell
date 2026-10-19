@@ -1,0 +1,158 @@
+# Copy this file to .github/workflows/ci.yml to enable CI on your fork.
+#
+#   mkdir -p .github/workflows && cp docs/ci-workflow.yml.example .github/workflows/ci.yml
+#
+# It is shipped as an example (not installed) so that forks stay in control of
+# what runs on their repository.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the previous run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip ruff
+      - name: Ruff (lint)
+        run: ruff check agentlite tests examples
+      - name: Ruff (format check)
+        run: ruff format --check agentlite tests
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum supported version is 3.9; keep testing it.
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest
+
+      - name: Security boundaries
+        # These are the tests that must fail if a control is weakened; they get
+        # their own step so a regression is visible at a glance.
+        run: pytest tests/test_security.py -v
+
+      - name: Coverage floor
+        # The 92% figure in the README is only trustworthy if something fails
+        # when it drops. One leg only, so the matrix stays fast.
+        if: matrix.python-version == '3.11'
+        run: |
+          coverage run --source=agentlite -m pytest tests/ -q
+          coverage report --fail-under=88
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install the wheel in a clean virtualenv
+        # A clean environment is the only way to notice a missing dependency or
+        # a data file that was never packaged.
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --upgrade pip
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/python -c "import agentlite, agentlite.api.server; print(agentlite.__version__)"
+          /tmp/clean/bin/agentlite version
+          /tmp/clean/bin/agentlite tools
+
+      - name: Check the packaged default config
+        # Run from OUTSIDE the checkout: with the repo as cwd, `import agentlite`
+        # resolves to the source tree and this check would pass no matter what
+        # the wheel actually contains.
+        run: |
+          cd /tmp
+          /tmp/clean/bin/python - <<'PY'
+          from pathlib import Path
+          import agentlite
+          print("imported from:", agentlite.__file__)
+          assert "site-packages" in str(agentlite.__file__), "imported the checkout, not the wheel"
+          default = Path(agentlite.__file__).parent / "config" / "default.yaml"
+          assert default.exists(), "default.yaml was not packaged"
+          print("default.yaml packaged:", default)
+          PY
+          /tmp/clean/bin/agentlite config --init demo.yaml
+          /tmp/clean/bin/agentlite config --check --config demo.yaml
+          /tmp/clean/bin/agentlite doctor --config demo.yaml || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  docker:
+    runs-on: ubuntu-latest
+    # The container is the isolation story, so it gets built with the hardened
+    # flags on every push: --read-only, --cap-drop ALL, no-new-privileges.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t agentlite:ci .
+
+      - name: Run it hardened and hit the API
+        run: |
+          docker run -d --name agentlite-ci \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --tmpfs /app/workspace:rw,uid=10001 \
+            -p 127.0.0.1:8765:8765 \
+            -e OPENAI_API_KEY=dummy -e AGENTLITE_API_TOKEN=ci-token \
+            agentlite:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8765/health && break
+            sleep 1
+          done
+          curl -fsS -H "X-API-Key: ci-token" http://127.0.0.1:8765/api/status > /dev/null
+          # Without the token the API must refuse.
+          if curl -fsS http://127.0.0.1:8765/api/status > /dev/null 2>&1; then
+            echo "::error::unauthenticated request was allowed"; exit 1
+          fi
+          # The container must be running unprivileged.
+          docker exec agentlite-ci id -u | grep -q '^10001$'
+
+      - name: Container logs
+        if: failure()
+        run: docker logs agentlite-ci || true
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f agentlite-ci || true

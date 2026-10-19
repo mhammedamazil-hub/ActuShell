@@ -1,0 +1,80 @@
+# Publish to PyPI when a release tag is pushed.
+#
+#   mkdir -p .github/workflows && cp docs/publish-workflow.yml.example .github/workflows/publish.yml
+#
+# Uses PyPI **trusted publishing** (OIDC): no API tokens to create, rotate or
+# leak. One-time setup on PyPI:
+#
+#   1. Create the project (https://pypi.org/manage/projects/) - the name
+#      "agentlite" was free at the time of writing.
+#   2. In the project's "Publishing" settings, add a *pending* publisher:
+#        owner:        mhammedamazil-hub
+#        repository:   AgentLite
+#        workflow:     publish.yml
+#        environment:  pypi
+#   3. Create an environment called `pypi` in the GitHub repo settings and
+#      (recommended) restrict it to protected tags.
+#
+# After that: `git tag v0.2.1 && git push origin v0.2.1` publishes it.
+
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Check the metadata
+        run: |
+          python -m pip install twine
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  test-install:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the wheel in a clean environment
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/agentlite version
+          /tmp/clean/bin/agentlite tools
+
+  publish:
+    needs: [build, test-install]
+    runs-on: ubuntu-latest
+    environment: pypi          # <- matches the trusted publisher on PyPI
+    permissions:
+      id-token: write          # <- required for OIDC
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
