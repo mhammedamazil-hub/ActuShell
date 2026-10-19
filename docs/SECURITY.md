@@ -196,9 +196,11 @@ bad model decision; it does not make an untrusted model safe.
 * **Whatever the browser itself does.** Downloads, uploads, service workers and
   browser-internal state are Chromium's business. Screenshot paths are confined
   to the workspace; downloads are not.
-* **Denial of service by a caller with the API token.** There is no per-token
-  rate limit and no quota. The concurrency cap bounds parallel work, not total
-  work.
+* **Denial of service by a caller with the API token.** There *is* a per-caller
+  rate limit (`server.rate_limit_per_minute`, default 60/min) and a concurrency
+  cap, but no quota and no adaptive throttling: a determined caller can still
+  keep the machine busy, and the rate limiter is in-process, so it does nothing
+  against traffic that never reaches AgentLite (put a reverse proxy in front).
 * **Secrets the model puts in a task string.** The audit log scrubs credential
   *shapes*, not every possible secret. Anything the model echoes into a task, a
   file or an argument can end up in the log.

@@ -187,6 +187,11 @@ class ServerConfig:
     max_concurrent_runs: int = 4
     #: Maximum length of a task string accepted by /api/run.
     max_task_chars: int = 32768
+    #: Requests per minute allowed per caller on the expensive endpoints
+    #: (/api/run, /api/confirm). 0 disables the limit. Identity is the API
+    #: token when one is configured, otherwise the peer address, so one side of
+    #: a shared deployment cannot starve the other.
+    rate_limit_per_minute: int = 60
 
     @classmethod
     def from_mapping(cls, data):

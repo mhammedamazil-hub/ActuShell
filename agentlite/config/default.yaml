@@ -26,6 +26,8 @@ server:
   # How many agent runs may execute at once, and how long a task string may be.
   max_concurrent_runs: 4
   max_task_chars: 32768
+  # Requests per minute per caller on /api/run and /api/confirm (0 = off).
+  rate_limit_per_minute: 60
 
 provider:
   # Preset name: openai | openrouter | gemini | ollama | groq | together |

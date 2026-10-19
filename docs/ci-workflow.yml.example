@@ -102,3 +102,42 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  docker:
+    runs-on: ubuntu-latest
+    # The container is the isolation story, so it gets built with the hardened
+    # flags on every push: --read-only, --cap-drop ALL, no-new-privileges.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t agentlite:ci .
+
+      - name: Run it hardened and hit the API
+        run: |
+          docker run -d --name agentlite-ci \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --tmpfs /app/workspace:rw,uid=10001 \
+            -p 127.0.0.1:8765:8765 \
+            -e OPENAI_API_KEY=dummy -e AGENTLITE_API_TOKEN=ci-token \
+            agentlite:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8765/health && break
+            sleep 1
+          done
+          curl -fsS -H "X-API-Key: ci-token" http://127.0.0.1:8765/api/status > /dev/null
+          # Without the token the API must refuse.
+          if curl -fsS http://127.0.0.1:8765/api/status > /dev/null 2>&1; then
+            echo "::error::unauthenticated request was allowed"; exit 1
+          fi
+          # The container must be running unprivileged.
+          docker exec agentlite-ci id -u | grep -q '^10001$'
+
+      - name: Container logs
+        if: failure()
+        run: docker logs agentlite-ci || true
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f agentlite-ci || true

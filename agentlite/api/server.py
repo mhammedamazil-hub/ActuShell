@@ -17,11 +17,14 @@ computer control to the network without one.
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
+import threading
 import time
+from collections import deque
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -96,6 +99,9 @@ class Runtime:
         self.warnings = validate_config(config)
         self.security_warnings = security_warnings(config)
         self.active_runs = 0
+        self._hits: Dict[str, deque[float]] = {}
+        self._rate_lock = threading.Lock()
+        self._RATE_KEYS = 10_000
 
     # -- concurrency ------------------------------------------------------ #
     # Agent runs are synchronous and can spawn processes; on a small machine a
@@ -111,6 +117,39 @@ class Runtime:
 
     def release_slot(self) -> None:
         self.active_runs = max(0, self.active_runs - 1)
+
+    # -- rate limiting ---------------------------------------------------- #
+
+    def caller_id(self, request: Request) -> str:
+        """Identify a caller without storing anything secret.
+
+        A configured token identifies the client; otherwise the peer address
+        does. The token itself is never kept - only a truncated digest, so a
+        memory dump or a log line cannot leak it.
+        """
+        token = request.headers.get("authorization", "") or request.headers.get("x-api-key", "")
+        if token:
+            digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+            return f"token:{digest}"
+        peer = request.client.host if request.client else "unknown"
+        return f"peer:{peer}"
+
+    def check_rate_limit(self, key: str) -> int:
+        """Return 0 when the call may proceed, else the ``Retry-After`` seconds."""
+        limit = int(self.config.server.rate_limit_per_minute or 0)
+        if limit <= 0:
+            return 0
+        now = time.monotonic()
+        with self._rate_lock:
+            if len(self._hits) > self._RATE_KEYS:  # bound memory
+                self._hits.clear()
+            hits = self._hits.setdefault(key, deque())
+            while hits and now - hits[0] >= 60.0:
+                hits.popleft()
+            if len(hits) >= limit:
+                return max(1, int(60.0 - (now - hits[0])) + 1)
+            hits.append(now)
+            return 0
 
     # -- lifecycle -------------------------------------------------------- #
 
@@ -149,6 +188,7 @@ class Runtime:
                 "active_runs": self.active_runs,
                 "max_steps": self.config.security.max_steps,
                 "max_task_chars": self.config.server.max_task_chars,
+                "rate_limit_per_minute": self.config.server.rate_limit_per_minute,
             },
             "security": {
                 "confirmation_mode": self.config.security.confirmation_mode,
@@ -269,7 +309,17 @@ def create_app(
         return {"events": runtime.agent.audit.tail(limit)}
 
     @app.post("/api/run", tags=["agent"], dependencies=auth)
-    async def api_run(body: RunRequest) -> Any:
+    async def api_run(body: RunRequest, request: Request) -> Any:
+        retry_after = runtime.check_rate_limit(runtime.caller_id(request))
+        if retry_after:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"rate limit of {runtime.config.server.rate_limit_per_minute}/min exceeded "
+                    "- retry later"
+                ),
+                headers={"Retry-After": str(retry_after)},
+            )
         task = body.task.strip()
         if not task:
             raise HTTPException(status_code=400, detail="task must not be empty")
@@ -315,7 +365,14 @@ def create_app(
         }
 
     @app.post("/api/runs/{run_id}/confirm", tags=["agent"], dependencies=auth)
-    async def api_confirm(run_id: str, body: ConfirmRequest) -> Any:
+    async def api_confirm(run_id: str, body: ConfirmRequest, request: Request) -> Any:
+        retry_after = runtime.check_rate_limit(runtime.caller_id(request))
+        if retry_after:
+            raise HTTPException(
+                status_code=429,
+                detail="rate limit exceeded - retry later",
+                headers={"Retry-After": str(retry_after)},
+            )
         run = runtime.store.get(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="unknown or expired run")

@@ -609,6 +609,51 @@ def test_api_limits_concurrent_runs(config_factory):
     assert results["second"].headers["retry-after"] == "5"
 
 
+def test_api_rate_limits_a_caller(config_factory):
+    """One caller must not be able to starve the runtime."""
+    client, _ = _api(config_factory, server={"rate_limit_per_minute": 3})
+    codes = [client.post("/api/run", json={"task": "hello"}).status_code for _ in range(5)]
+    assert codes[:3] == [200, 200, 200]
+    assert codes[3:] == [429, 429]
+    assert "rate limit" in client.post("/api/run", json={"task": "hello"}).json()["detail"]
+    assert int(client.post("/api/run", json={"task": "hello"}).headers["retry-after"]) >= 1
+
+
+def test_rate_limit_is_per_caller_and_can_be_disabled(config_factory):
+    from agentlite.api.server import Runtime
+    from agentlite.core.agent import Agent
+    from agentlite.core.audit import AuditLogger
+    from agentlite.core.confirmation import AutoAllowHandler
+
+    class FakeRequest:
+        def __init__(self, headers=None, host="1.2.3.4"):
+            self.headers = headers or {}
+            self.client = type("C", (), {"host": host})()
+
+    config = config_factory(server={"rate_limit_per_minute": 2, "api_token": "secret-token"})
+    runtime = Runtime(
+        config,
+        agent=Agent.from_config(
+            config,
+            provider=MockProvider(steps=["ok"]),
+            confirmation_handler=AutoAllowHandler(),
+            audit=AuditLogger(enabled=False),
+        ),
+    )
+    with_token = FakeRequest({"authorization": "Bearer secret-token"})
+    other_token = FakeRequest({"authorization": "Bearer a-different-token"})
+    assert runtime.caller_id(with_token) != runtime.caller_id(other_token)
+    assert "secret-token" not in runtime.caller_id(with_token)
+    for _ in range(2):
+        assert runtime.check_rate_limit(runtime.caller_id(with_token)) == 0
+    assert runtime.check_rate_limit(runtime.caller_id(with_token)) > 0
+    # A different caller still has its own budget.
+    assert runtime.check_rate_limit(runtime.caller_id(other_token)) == 0
+
+    config.server.rate_limit_per_minute = 0  # explicitly disabled
+    assert runtime.check_rate_limit(runtime.caller_id(with_token)) == 0
+
+
 def test_api_reports_security_warnings_and_limits(config_factory):
     client, _ = _api(config_factory)
     body = client.get("/api/status").json()

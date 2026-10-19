@@ -40,6 +40,7 @@ directory when there is no config file.
 | `log_level` | `info` | uvicorn log level. |
 | `max_concurrent_runs` | `4` | Runs executing at the same time. Extra callers get HTTP 429 + `Retry-After: 5`. |
 | `max_task_chars` | `32768` | Longest accepted `task` string. Longer tasks get HTTP 413. |
+| `rate_limit_per_minute` | `60` | Requests/minute per caller on `/api/run` and `/api/confirm` (0 = off). Callers are identified by the API token when one is set, otherwise by peer address. |
 
 ## `provider`
 
