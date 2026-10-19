@@ -85,18 +85,25 @@ jobs:
           /tmp/clean/bin/python -c "import agentlite, agentlite.api.server; print(agentlite.__version__)"
           /tmp/clean/bin/agentlite version
           /tmp/clean/bin/agentlite tools
-          /tmp/clean/bin/agentlite config --check || true
-          /tmp/clean/bin/agentlite doctor || true
 
       - name: Check the packaged default config
+        # Run from OUTSIDE the checkout: with the repo as cwd, `import agentlite`
+        # resolves to the source tree and this check would pass no matter what
+        # the wheel actually contains.
         run: |
+          cd /tmp
           /tmp/clean/bin/python - <<'PY'
           from pathlib import Path
           import agentlite
+          print("imported from:", agentlite.__file__)
+          assert "site-packages" in str(agentlite.__file__), "imported the checkout, not the wheel"
           default = Path(agentlite.__file__).parent / "config" / "default.yaml"
           assert default.exists(), "default.yaml was not packaged"
           print("default.yaml packaged:", default)
           PY
+          /tmp/clean/bin/agentlite config --init demo.yaml
+          /tmp/clean/bin/agentlite config --check --config demo.yaml
+          /tmp/clean/bin/agentlite doctor --config demo.yaml || true
 
       - uses: actions/upload-artifact@v4
         with:

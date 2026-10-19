@@ -198,3 +198,87 @@ def test_audit_log_records_the_call(runner, audit):
     event = [e for e in events if e.get("tool") == "terminal.run"][-1]
     assert event["decision"] == "allow"
     assert event["ok"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Failure modes a model will actually hit
+# --------------------------------------------------------------------------- #
+
+
+def _mock():
+    from agentlite.providers.mock import MockProvider
+
+    return MockProvider(steps=[])
+
+
+def _ctx(agent, workspace_dir):
+    from agentlite.tools.base import ToolContext
+
+    return ToolContext(run_id="r", config=agent.config, workspace=workspace_dir)
+
+
+def _exec(agent, workspace_dir, **arguments):
+    from agentlite.core.models import ToolCall
+
+    return agent.executor.execute(
+        ToolCall(id="c", name="terminal.run", arguments=arguments), _ctx(agent, workspace_dir)
+    )
+
+
+def test_command_not_found(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    result = _exec(agent, workspace_dir, command="definitely-not-a-real-binary-xyz")
+    assert result.ok is False
+    assert "command not found" in result.error
+
+
+def test_unbalanced_quote_is_reported_not_crashed(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    result = _exec(agent, workspace_dir, command='echo "unterminated')
+    assert result.ok is False
+    assert "could not parse command" in result.error
+
+
+def test_empty_command_is_refused(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    assert "empty command" in (_exec(agent, workspace_dir, command="   ").error or "")
+
+
+def test_missing_working_directory_is_reported(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    result = _exec(agent, workspace_dir, command="pwd", cwd="no/such/dir")
+    assert result.ok is False
+    assert "working directory does not exist" in result.error
+
+
+def test_a_failing_command_reports_its_exit_code_and_stderr(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    script = "import sys; sys.stderr.write('boom'); sys.exit(3)"
+    result = _exec(agent, workspace_dir, command=f'python3 -c "{script}"')
+    assert result.ok is False
+    assert result.exit_code == 3
+    assert "boom" in (result.meta.get("stderr") or "")
+
+
+def test_stdout_and_stderr_are_reported_separately(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    script = "import sys; sys.stdout.write('out'); sys.stderr.write('err')"
+    result = _exec(agent, workspace_dir, command=f'python3 -c "{script}"')
+    assert result.output == "out"
+    assert result.meta["stderr"] == "err"
+
+
+def test_timeout_is_clamped_by_the_configured_maximum(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    agent.config.permissions.terminal.max_timeout = 5
+    tool = agent.registry.get("terminal.run")
+    assert tool is not None
+    assert tool._clamp_timeout(3600, 5) == 5
+    assert tool._clamp_timeout(2, 5) == 2
+
+
+def test_a_boolean_timeout_falls_back_to_the_configured_default(agent_factory, workspace_dir):
+    agent = agent_factory(_mock())
+    agent.config.permissions.terminal.timeout = 7
+    tool = agent.registry.get("terminal.run")
+    assert tool.timeout_for({"timeout": True}, _ctx(agent, workspace_dir)) == 7

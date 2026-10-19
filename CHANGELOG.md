@@ -27,6 +27,10 @@ concrete way to break or abuse the 0.1.0 behaviour.
 - **Server limits**: `server.max_concurrent_runs` (default 4, extra callers get
   HTTP 429 with `Retry-After`) and `server.max_task_chars` (default 32768,
   longer tasks get HTTP 413).
+- **Per-caller rate limiting.** `server.rate_limit_per_minute` (default 60,
+  0 = off) bounds `/api/run` and `/api/confirm` per API-token digest or peer
+  address, so one caller cannot starve the runtime. Callers get HTTP 429 with
+  `Retry-After`.
 - **Credential-shape redaction in the audit log.** Keys that look like
   OpenAI/Groq/Slack/AWS/GitHub tokens, JWTs or `Bearer …` headers are scrubbed
   even when they only ever appeared in tool output.
@@ -45,6 +49,16 @@ concrete way to break or abuse the 0.1.0 behaviour.
 - **Better CLI errors**: a missing API key now explains how to set it (or how
   to try AgentLite against `examples/fake_llm_server.py`), an unparseable
   config file names the file and the YAML error.
+- **A security policy.** Root [`SECURITY.md`](SECURITY.md) states how to report
+  a vulnerability, what is in scope (escapes, SSRF, credential leaks) and what
+  is not (anything an allow-listed command does, DoS by a trusted token
+  holder).
+- **A hardened container posture.** The `Dockerfile` runs as uid 10001 and is
+  written so `--read-only --cap-drop ALL no-new-privileges` work; the CI
+  example builds it and runs the API that way on every push.
+- **Release tooling.** `docs/publish-workflow.yml.example` publishes to PyPI
+  with trusted publishing (OIDC) and verifies the wheel in a clean venv first;
+  `CONTRIBUTING.md` documents the release steps.
 - **The run deadline is now checked between tool calls**, not only between
   steps: one model response can request many calls, and each may run for its
   timeout.
@@ -54,10 +68,18 @@ concrete way to break or abuse the 0.1.0 behaviour.
 - **The audit log is created with mode `0600` and rotates** at
   `logging.max_file_mb` (default 25 MB, 2 backups), so a long-lived runtime
   cannot fill the disk with it.
-- 57 new tests, most of them in `tests/test_security.py`.
+- 89 new tests since v0.1.0 (57 in the main hardening pass, 32 after it),
+  most of them security boundaries in `tests/test_security.py` (53) plus
+  failure-path tests for the CLI, terminal and confirmation handlers.
 
 ### Fixed
 
+- **`agentlite doctor` no longer counts a missing API key as a problem for
+  local providers** (Ollama, LM Studio, vLLM). A local server never needs one.
+- **The CI example's packaged-config check actually checks the package.** It
+  ran with the checkout as its working directory, so `import agentlite` resolved
+  to the source tree and the assertion could not fail; it now runs from outside
+  the repo and fails if the wheel omits `config/default.yaml`.
 - **Terminal output is capped in constant memory.** Output is read
   incrementally instead of with `communicate()`, so a command that prints
   hundreds of megabytes returns a truncated result instead of exhausting RAM.

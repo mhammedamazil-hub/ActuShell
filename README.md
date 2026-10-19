@@ -67,7 +67,7 @@ What is implemented and tested today:
 | Provider abstraction | ✅ one real provider: OpenAI-compatible (+ scripted mock for tests) |
 | HTTP API | ✅ `/api/run`, `/api/status`, `/api/tools`, confirmations, audit tail |
 | CLI | ✅ `start`, `doctor`, `tools`, `config`, `run`, `version` |
-| Tests | ✅ 260 tests, all offline (51 of them security boundaries) |
+| Tests | ✅ 292 tests, all offline (53 of them security boundaries) |
 
 v0.2.0 is a hardening release: it closes a terminal memory-exhaustion hole, an
 SSRF hole in the browser, a filesystem symlink/FIFO escape and several smaller
@@ -354,6 +354,7 @@ AgentLite can control a real computer, so security is the product, not a feature
 | Steps per run | 25 |
 | Wall clock per run | 600 s |
 | Concurrent runs | 4 (extra callers get HTTP 429) |
+| Rate limit | 60 req/min per caller on `/api/run` (429 + `Retry-After`) |
 | Task length | 32,768 characters (longer → HTTP 413) |
 | API bind address | `127.0.0.1` |
 | API authentication | required when bound to anything but loopback |
@@ -515,7 +516,7 @@ Design notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Testing
 
 ```bash
-pytest                                  # 260 tests, offline, ~19 s
+pytest                                  # 292 tests, offline, ~20 s
 pytest tests/test_security.py -v        # the security boundaries only
 ruff check agentlite tests              # lint
 ruff format --check agentlite tests     # formatting

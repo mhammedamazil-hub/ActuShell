@@ -581,6 +581,10 @@ def collect_secret_values() -> List[str]:
     return values
 
 
+#: Presets that talk to a server on the user's own machine: no key needed.
+LOCAL_PROVIDER_PRESETS = frozenset({"ollama", "lmstudio", "vllm"})
+
+
 def security_warnings(cfg: Config) -> List[str]:
     """Non-fatal but risky settings, surfaced by ``doctor`` and ``/api/status``."""
     warnings: List[str] = []

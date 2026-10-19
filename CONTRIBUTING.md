@@ -16,7 +16,7 @@ ruff check agentlite tests
 ruff format --check agentlite tests
 ```
 
-The suite is 260 tests and runs offline in about 19 seconds. If it needs a key,
+The suite is 292 tests and runs offline in about 20 seconds. If it needs a key,
 a network call or a browser binary, it does not belong in it.
 
 ## The rules
@@ -68,11 +68,35 @@ Implement `LLMProvider` (`complete`, `describe`) in `agentlite/providers/`, regi
 it in `providers/__init__.py`, and test it without a real key (see how
 `test_provider.py` uses `httpx.MockTransport` and a fake HTTP server).
 
+## Releasing
+
+The version lives in exactly two places: `agentlite/__init__.py` (`__version__`)
+and `pyproject.toml` (`version`). Keep them in step.
+
+1. Update `CHANGELOG.md` (Added / Fixed / Changed / Removed, breaking changes
+   called out).
+2. Bump both version strings, commit.
+3. `git tag -a v0.2.1 -m "..." && git push origin v0.2.1`
+4. Create the release: `gh release create v0.2.1 --notes-file <notes> dist/*`
+   Or let [`docs/publish-workflow.yml.example`](docs/publish-workflow.yml.example)
+   do it: it builds, checks the metadata with `twine check`, installs the wheel
+   in a clean venv, and publishes to PyPI using **trusted publishing** (OIDC, no
+   API tokens anywhere).
+5. `pip install agentlite==0.2.1` from a clean environment and run
+   `agentlite doctor` before announcing anything.
+
+Versions are semantic: because this is `0.x`, a **minor** bump may contain
+breaking changes (that is how `follow_symlinks` changed in 0.2.0).
+
 ## Continuous integration
 
-CI runs the test suite on Python 3.9-3.12 and builds the wheel. The workflow
-lives in [`docs/ci-workflow.yml.example`](docs/ci-workflow.yml.example) — copy it
-to `.github/workflows/ci.yml` when you set the repository up.
+CI lints, runs the suite on Python 3.9-3.12, builds and installs the wheel in a
+clean virtualenv, and builds the hardened container image. The workflows live in
+[`docs/ci-workflow.yml.example`](docs/ci-workflow.yml.example) and
+[`docs/publish-workflow.yml.example`](docs/publish-workflow.yml.example) — copy
+them into `.github/workflows/` when you set the repository up. They are shipped
+as examples (not installed) so that forks stay in control of what runs on their
+repository.
 
 ## Running things
 

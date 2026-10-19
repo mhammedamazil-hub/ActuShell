@@ -22,6 +22,7 @@ import yaml
 from .. import __version__
 from ..core.config import (
     IMPLEMENTED_PROVIDERS,
+    LOCAL_PROVIDER_PRESETS,
     PROVIDER_PRESETS,
     Config,
     default_config_path,
@@ -170,17 +171,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
         _status(OK, "base_url", str(description.get("base_url")))
     key = resolve_api_key(config.provider)
+    local_preset = str(config.provider.name).lower() in LOCAL_PROVIDER_PRESETS
     if config.provider.name == "mock":
         pass
     elif key:
         _status(OK, "api key", f"found in ${config.provider.api_key_env}")
+    elif local_preset:
+        # A local server needs no key: warn, but do not call it a problem.
+        _status(
+            WARN,
+            "api key",
+            f"${config.provider.api_key_env} is not set "
+            f"(optional for {config.provider.name}; expected {config.provider.effective_base_url})",
+        )
     else:
         _status(
             WARN,
             "api key",
-            f"${config.provider.api_key_env} is not set (required for real tasks"
-            + (", optional for Ollama/local servers" if config.provider.name == "ollama" else "")
-            + ")",
+            f"${config.provider.api_key_env} is not set (required for real tasks)",
         )
         problems += 1
 
@@ -336,7 +344,7 @@ def _require_credentials(config: Config) -> None:
     preset = (config.provider.name or "").lower()
     if preset in {"mock"} or resolve_api_key(config.provider):
         return
-    local = preset in {"ollama", "lmstudio", "vllm"}
+    local = preset in LOCAL_PROVIDER_PRESETS
     _status(FAIL, "api key", f"${config.provider.api_key_env} is not set")
     if local:
         _print(f"  Expected a local server at {config.provider.effective_base_url}")
